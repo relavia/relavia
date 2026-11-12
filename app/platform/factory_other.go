@@ -14,3 +14,9 @@ func NewTUN() TUNDevice {
 }
 
 func NewTray(ev TrayEvents) Tray { return NoopTray{Events: ev} }
+
+// NewInstaller: no in-app install path on this platform yet
+// (Step 16); the honest unsupported implementation.
+func NewInstaller() Installer {
+	return UnsupportedInstaller{Why: "in-app update install is not available on this platform"}
+}

@@ -54,6 +54,19 @@ type Settings struct {
 	Mode           string `json:"mode,omitempty"` // kernel RunMode; default "manual"
 	SelectedNodeID string `json:"selectedNodeId,omitempty"`
 	SelectedGroup  string `json:"selectedGroup,omitempty"`
+
+	// Update mechanism (Step 16, docs/relavia-update-v1.md).
+	// UpdateChannel is "stable" (default) or "beta".
+	// UpdateAutoCheck is the periodic-check opt-in (default
+	// false: the client never fetches update metadata unless the
+	// user asks or opts in). The Seen* maps are the anti-rollback
+	// anchors per channel; UpdateLastCheck is RFC 3339. All of it
+	// is local-only bookkeeping, never transmitted.
+	UpdateChannel       string            `json:"updateChannel,omitempty"`
+	UpdateAutoCheck     bool              `json:"updateAutoCheck,omitempty"`
+	UpdateSeenSeq       map[string]int64  `json:"updateSeenSeq,omitempty"`
+	UpdateSeenPublished map[string]string `json:"updateSeenPublished,omitempty"`
+	UpdateLastCheck     string            `json:"updateLastCheck,omitempty"`
 }
 
 // Document is the on-disk store document.

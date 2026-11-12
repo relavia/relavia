@@ -11,3 +11,8 @@ func NewSystemProxy() SystemProxy { return &winSystemProxy{} }
 func NewTUN() TUNDevice { return &winTUN{} }
 
 func NewTray(ev TrayEvents) Tray { return newWinTray(ev) }
+
+// NewInstaller returns the Windows update installer (Step 16
+// placeholder: reports unavailable pending real-machine
+// verification — see installer_windows.go).
+func NewInstaller() Installer { return winInstaller{} }

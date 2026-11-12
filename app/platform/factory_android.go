@@ -21,6 +21,11 @@ func NewTUN() TUNDevice { return androidTUN{} }
 
 func NewTray(ev TrayEvents) Tray { return NoopTray{Events: ev} }
 
+// NewInstaller returns the Android update installer (Step 16):
+// the bridge to the shell-registered install binder, which
+// fires the system package-installer intent (installer.go).
+func NewInstaller() Installer { return BridgeInstaller{} }
+
 // androidTUN reports the VpnService facility state.
 type androidTUN struct{}
 
