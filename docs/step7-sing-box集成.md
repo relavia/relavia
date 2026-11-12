@@ -43,9 +43,9 @@
 | Trojan | raw / ws / http / httpupgrade / grpc | tls | ✓ 过（raw、ws） |
 | VMess | raw / ws / http / httpupgrade / grpc | none / tls | ✓ 过（raw、grpc+tls） |
 | VLESS | raw / ws / http / httpupgrade / grpc | none / tls / **reality** | ✓ 过（裸 tcp、Reality+Vision） |
-| Hysteria2 | quic | tls | 环境阻断（§5） |
-| TUIC | quic | tls | 环境阻断（§5） |
-| WireGuard | raw（端点形态） | none | 环境阻断（§5） |
+| Hysteria2 | quic | tls | ✓ 过（CI 实证，§5） |
+| TUIC | quic | tls | ✓ 过（CI 实证，§5） |
+| WireGuard | raw（端点形态） | none | CI 首跑失败（gVisor martian 丢包）→ 已修复，待 CI 复跑确认（§5） |
 | SOCKS5 | raw | none / tls | ✓ 过（用户密码） |
 | HTTP | raw | none / tls | ✓ 过（用户密码） |
 | OpenVPN | —— | —— | **不在进程内矩阵**：按 Step 2 裁定 F-1 为独立进程形态，本步仅标注，未集成 |
@@ -74,9 +74,9 @@
 | socks5-userpass | **过** | 1.67ms | —— |
 | http-proxy-userpass | **过** | 1.23ms | —— |
 | 负控：SS-2022 错误密钥 | **过（应失败且失败）** | —— | 服务端日志实证 "cipher: message authentication failed"；结果为 handshake_failed 而非 Go error，证明握手为真 |
-| hysteria2-salamander | **环境阻断，未过** | —— | 见下 |
-| tuic-v5 | **环境阻断，未过** | —— | 见下 |
-| wireguard | **环境阻断，未过** | —— | 见下 |
+| hysteria2-salamander | 沙箱环境阻断；**CI 首跑通过** | —— | CI run 43241292162 官方标签测试步全量实跑通过（§5 CI 补记） |
+| tuic-v5 | 沙箱环境阻断；**CI 首跑通过** | —— | 同上 |
+| wireguard | 沙箱环境阻断；**CI 首跑失败 → 已修复待复跑** | —— | 首跑 60.03s 上下文超时；根因为 gVisor martian 丢包，修复与证据链见 §5 CI 补记 |
 
 **UDP 三协议环境阻断的证据链（非协议实现问题）**：
 
@@ -84,6 +84,14 @@
 2. sing-box 侧日志实证：WireGuard 端点反复报 "failed to send handshake initiation: write udp …: sendmmsg: operation not permitted"；Hysteria2 出站 "context deadline exceeded"（服务端零响应）；TUIC "no recent network activity"。
 3. 已尝试的绕行：`QUIC_GO_DISABLE_GSO=1`（quic-go 分支提供的关 GSO 开关）无效 —— 因为连普通 sendmsg 路径同样被封锁。
 4. 处置：三条用例**不删除、不改 mock**；测试内置环境探针（probeUDPSend / probeSendmmsg），在受阻环境以 SKIP 并附证据原因，在不受限环境（本步新增的 CI 步，GitHub 托管 runner）全量执行。**残留风险如实标注**：WireGuard 服务端「端点入站流量 → 路由 → direct 出站」的转发路径、以及 QUIC 两协议的完整握手，在 CI 首跑前未在任何环境实证过；CI 首跑结果即为其验收证据，若 WireGuard 需要补 route 规则，首跑失败日志会直接指明。
+
+**CI 首跑结果与 WireGuard 修复（2026-11-12 补记，run 43241292162，官方标签测试步）**：
+
+- **Hysteria2 / TUIC：在不受限 runner 上全量实跑通过**——上述残留风险中 QUIC 两协议一项就此关闭，沙箱「环境阻断」定性（非实现问题）得到实证。
+- **WireGuard：首跑失败**——仅该子测试失败，60.03s 后 TestHandshakeNode 返回 Go error（context deadline exceeded）；同跑日志出现 gVisor `rate_limited.go` 的 "Martian packet dropped with loopback destination address" 告警。
+- **根因（源码级证据链）**：sing-box 1.14 的 WireGuard endpoint 在非 system 模式下，把解封装后的内层包注入一个内嵌 gVisor 协议栈（`transport/wireguard/device_stack.go` 经 `tun.NewGVisorStackWithOptions` 建栈、经 `Write → DeliverNetworkPacket` 注入）；gVisor 的 IPv4 接收路径（`gvisor/pkg/tcpip/network/ipv4/ipv4.go` HandlePacket）在非回环网卡且 `AllowExternalLoopbackTraffic` 未开（sing-tun 建栈未开）时，对源/目的为回环地址的包一律按 martian 丢弃。本用例的隧道内目标恰是 127.0.0.1 上的回显服务，于是服务端的 TCP forwarder 永远等不到连接、三重断言中的数据面全灭；外层 WG 握手走真实 UDP socket 本身不受阻，但 TestHandshake 以「经隧道取回 HTTP 响应」为成功判据，只能烧满 60s 上下文以 Go error 失败——与首跑现象逐项吻合。Hy2/TUIC 服务端为普通监听入站、目的地仅以连接元数据路由、内层包不经 gVisor 栈，故不受影响，与「仅 WG 失败」一致。服务端 route 配置无缺失，不是当初预估的「需要补 route 规则」。
+- **修复**：不动服务端配置、不换 system 栈（CI runner 无 CAP_NET_ADMIN，建真实 TUN 必失败且改变被测对象）、不降断言。仅把 WireGuard 用例的隧道内目标由 127.0.0.1 改为服务端 endpoint 的隧道地址 **10.66.66.1**（同端口）：sing-box 协议层本就为此设计——`protocol/wireguard/endpoint.go` 的 NewConnectionEx 会把目的地落在 endpoint 本地地址段内的连接改写为 127.0.0.1 再交路由，即寻址服务端隧道 IP 访问其本机服务是官方语义；内层包目的地由此成为普通单播地址，不再触发 martian 规则，随后仍由服务端 direct 出站拨向同一个回环回显服务。三重断言（真握手、真数据往返、流量计数非零）与负控用例均未改动。
+- **残留状态**：本修复的最终证据为 CI 复跑结果（本地沙箱 UDP 仍被封锁，修复用例在本地只能按探针 SKIP，已验编译/vet/未标记全套全绿）；复跑通过前，WireGuard 一行在本文件与 §4 矩阵中保持「已修复待确认」口径，不提前宣称通过。
 
 其余测试：未标记构建 `go test ./...` 全绿（kernel/mock/parsers/specnode/singbox）；官方标签下 singbox 包全套通过（3 条环境 SKIP 除外）；`go vet ./...` 干净；新代码均经 gofmt。
 
@@ -104,7 +112,7 @@
 
 ## 7. 未完成项与原因
 
-1. **Hysteria2 / TUIC / WireGuard 回环握手未在沙箱内实证** —— 沙箱 syscall 层封锁 UDP 发送（证据见 §5），非实现缺失；验收改由本步新增的 CI 步在不受限 runner 上完成，首跑结果待回填本文件。
+1. **UDP 三协议回环握手的实证状态** —— 沙箱内仍为环境阻断（syscall 层封锁 UDP 发送，证据见 §5，非实现缺失）；CI 首跑（run 43241292162）已实证 **Hysteria2 / TUIC 通过**，此项对两协议关闭；**WireGuard 首跑失败**（gVisor martian 丢包），已按 §5 CI 补记完成根因定位与拓扑修复，待 CI 复跑结果作最终验收证据。
 2. **TUN / 系统代理 / KillSwitch 未实现** —— 按方案书属 Steps 9–12 平台步；本步能力矩阵如实报 false 并显式拒绝。
 3. **AnyTLS 未进矩阵** —— 第二梯队，未做互通验证前不虚报（4.1）。
 4. **两种 spec 镜像结构并存**（parsers.Node 与 specnode.Node）—— 收敛属后续集成步，本步已登记。

@@ -223,6 +223,12 @@ type loopbackCase struct {
 	// precheck, when set, runs before setup (e.g. environment
 	// capability probes that may skip the case with evidence).
 	precheck func(t *testing.T)
+	// target, when set, rewrites the shared echo server's base
+	// URL into the address this case must address THROUGH the
+	// tunnel (probe and data fetch alike). Most protocols can
+	// address the echo server by its loopback address directly;
+	// WireGuard cannot (see the wireguard case comment).
+	target func(echoURL string) string
 }
 
 // probeUDPSend skips the calling case when this environment
@@ -471,6 +477,43 @@ func TestLoopbackHandshakes(t *testing.T) {
 		{
 			name:     "wireguard",
 			precheck: probeWireGuard,
+			// Through the tunnel this case must address the echo
+			// server as 10.66.66.1 (the server endpoint's own
+			// tunnel address), NOT as 127.0.0.1. Root cause,
+			// from the sing-box 1.14 sources: a non-system
+			// WireGuard endpoint feeds decapsulated packets
+			// into an embedded gVisor stack
+			// (transport/wireguard/device_stack.go), and
+			// gVisor's IPv4 receive path drops any packet with
+			// a loopback source or destination arriving on a
+			// non-loopback NIC as a "martian" packet
+			// (gvisor pkg/tcpip/network/ipv4 HandlePacket,
+			// AllowExternalLoopbackTraffic unset). With a
+			// loopback tunnel target the server's TCP
+			// forwarder therefore never sees the connection
+			// and the probe starves until the context deadline
+			// — exactly the first CI run's failure (60s
+			// timeout, martian drop in the log). Addressing
+			// the endpoint's tunnel address instead is the
+			// stack's designed path: the protocol endpoint
+			// rewrites destinations inside its local addresses
+			// to 127.0.0.1 before routing
+			// (protocol/wireguard/endpoint.go NewConnectionEx),
+			// so the server still dials the same loopback echo
+			// server via its direct outbound, while the packet
+			// inside the tunnel carries a plain unicast
+			// destination. The assertions are unchanged: a
+			// real WireGuard handshake must still complete
+			// before any data flows, the HTTP body must still
+			// round-trip through the tunnel, and the traffic
+			// counters must still move.
+			target: func(echoURL string) string {
+				u, err := url.Parse(echoURL)
+				if err != nil {
+					return echoURL
+				}
+				return "http://10.66.66.1:" + u.Port()
+			},
 			setup: func(t *testing.T) *specnode.Node {
 				serverPriv, serverPub := wgKeyPair(t)
 				clientPriv, clientPub := wgKeyPair(t)
@@ -542,7 +585,11 @@ func TestLoopbackHandshakes(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
-			adapter := New(Options{ProbeURL: echoURL + "/probe"})
+			targetBase := echoURL
+			if tc.target != nil {
+				targetBase = tc.target(echoURL)
+			}
+			adapter := New(Options{ProbeURL: targetBase + "/probe"})
 
 			res, err := adapter.TestHandshakeNode(ctx, node)
 			if err != nil {
@@ -560,7 +607,7 @@ func TestLoopbackHandshakes(t *testing.T) {
 				t.Fatalf("StartNode: %v", err)
 			}
 			defer adapter.Stop(ctx)
-			body := fetchBodyViaMixed(t, adapter.MixedAddr(), echoURL+"/data")
+			body := fetchBodyViaMixed(t, adapter.MixedAddr(), targetBase+"/data")
 			if !strings.Contains(body, echoToken) {
 				t.Fatalf("data path body = %q, want echo token", body)
 			}
