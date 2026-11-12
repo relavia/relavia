@@ -76,7 +76,7 @@
 | 负控：SS-2022 错误密钥 | **过（应失败且失败）** | —— | 服务端日志实证 "cipher: message authentication failed"；结果为 handshake_failed 而非 Go error，证明握手为真 |
 | hysteria2-salamander | 沙箱环境阻断；**CI 首跑通过** | —— | CI run 43241292162 官方标签测试步全量实跑通过（§5 CI 补记） |
 | tuic-v5 | 沙箱环境阻断；**CI 首跑通过** | —— | 同上 |
-| wireguard | 沙箱环境阻断；**CI 首跑失败 → 已修复待复跑** | —— | 首跑 60.03s 上下文超时；根因为 gVisor martian 丢包，修复与证据链见 §5 CI 补记 |
+| wireguard | 沙箱环境阻断；**CI 首跑失败 → 已修复，CI 复跑通过（run 43242571730，官方标签测试步 success，singbox 包 0.761s 全绿，WireGuard 子测试在内）** | —— | 首跑 60.03s 上下文超时；根因为 gVisor martian 丢包，修复与证据链见 §5 CI 补记 |
 
 **UDP 三协议环境阻断的证据链（非协议实现问题）**：
 
