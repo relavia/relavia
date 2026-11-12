@@ -187,7 +187,7 @@ func (f *fakeDNS) answer(msg []byte) []byte {
 	if rdata != nil {
 		resp = append(resp, 0xC0, 0x0C) // name pointer to question
 		resp = append(resp, byte(rtype>>8), byte(rtype))
-		resp = append(resp, 0, 1)  // CLASS IN
+		resp = append(resp, 0, 1) // CLASS IN
 		resp = append(resp, 0, 0, 0, 60)
 		resp = append(resp, byte(len(rdata)>>8), byte(len(rdata)))
 		resp = append(resp, rdata...)
