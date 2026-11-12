@@ -13,15 +13,20 @@ import (
 
 // Persistence for the service layer.
 //
-// STEP 9 SCOPE: the store is a single PLAIN JSON file. This is a
-// deliberate interim step, flagged here and in the Step 9 report:
-// proposal book Step 13 replaces this with encrypted storage
-// (config encryption, export confirmation). The replacement point
-// is exactly this file — Store's on-disk Document — so Step 13
-// can swap the codec without touching callers. Node credentials
-// are secrets (book 9.1); until Step 13 lands, the file is
-// written with 0600 permissions inside the user's config
-// directory and never leaves the device (book 3.2, local-first).
+// STEP 13 SCOPE (landed): the on-disk codec for Store's Document
+// is the versioned envelope in secure.go — Argon2id +
+// XChaCha20-Poly1305 encrypted when the user sets a passphrase,
+// plaintext with an explicit degraded marker when they choose
+// not to (book 5.5). Pre-Step-13 bare JSON files are detected at
+// open and migrated on the first encrypted save, with the
+// plaintext overwritten only after the sealed replacement is
+// durably written (a failed migration leaves the original file
+// byte-identical). Callers (cmd, UI, Android shell) keep the
+// exact Step 9 API; the lock lifecycle (Unlock / Lock /
+// SetPassphrase / Protection) is additive. Node credentials are
+// secrets (book 9.1); the file is written 0600 inside the user's
+// config directory and never leaves the device except through
+// the passphrase-encrypted backup export (book 3.2, local-first).
 
 // NodeRecord is one stored node plus its import-time warning
 // codes (parser warning codes from package parsers).
@@ -62,11 +67,16 @@ type Document struct {
 
 const storeVersion = 1
 
-// Store is a concurrency-safe JSON document store.
+// Store is a concurrency-safe document store. In passphrase
+// mode a locked Store holds an empty in-memory Document: data
+// accessors return zero values and Save refuses with
+// ErrStoreLocked until Unlock succeeds, so a locked store can
+// neither leak nor overwrite the sealed data.
 type Store struct {
 	mu   sync.Mutex
 	path string
 	doc  Document
+	sec  secState
 }
 
 // DefaultStorePath returns <UserConfigDir>/Relavia/store.json.
@@ -79,21 +89,29 @@ func DefaultStorePath() (string, error) {
 }
 
 // OpenStore loads the store at path, creating an empty document
-// when the file does not exist yet.
+// when the file does not exist yet. Three on-disk shapes are
+// recognised: the Step 13 envelope (encrypted or degraded
+// plaintext), a legacy pre-Step-13 bare JSON document (loaded
+// and flagged for migration), and — as a crash-recovery fallback
+// when the main file is unreadable — the atomic-write temp file
+// next to it. A passphrase-mode file opens Locked: the document
+// stays sealed until Unlock.
 func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path}
-	data, err := os.ReadFile(path)
+	s.sec.mode = ModeNone
+	s.sec.nowFn = time.Now
+	s.sec.lastActivity = time.Now()
+
+	data, err := readStoreBytes(path)
 	switch {
 	case err == nil:
-		if len(data) > 0 {
-			if err := json.Unmarshal(data, &s.doc); err != nil {
-				return nil, fmt.Errorf("service: parse store %s: %w", path, err)
-			}
+		if err := s.loadBytesLocked(data); err != nil {
+			return nil, err
 		}
 	case os.IsNotExist(err):
 		// Fresh store.
 	default:
-		return nil, fmt.Errorf("service: read store %s: %w", path, err)
+		return nil, err
 	}
 	if s.doc.Version == 0 {
 		s.doc.Version = storeVersion
@@ -101,37 +119,213 @@ func OpenStore(path string) (*Store, error) {
 	return s, nil
 }
 
-// Save persists the document atomically (write temp + rename),
-// with owner-only permissions because it contains credentials.
+// readStoreBytes reads the store file, falling back to the
+// atomic-write temp file when the main file is missing or
+// unreadable (the crash window of writeFileAtomic, and of the
+// migration overwrite protocol). If both exist and the main file
+// parses, the temp file is ignored.
+func readStoreBytes(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err == nil && len(data) > 0 {
+		if probeStoreBytes(data) == nil {
+			return data, nil
+		}
+	}
+	tmpData, tmpErr := os.ReadFile(path + ".tmp")
+	if tmpErr == nil && len(tmpData) > 0 && probeStoreBytes(tmpData) == nil {
+		return tmpData, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return data, nil
+	}
+	return nil, fmt.Errorf("%w: %s does not parse as a store file", ErrCorruptStore, path)
+}
+
+// probeStoreBytes reports whether data is a recognisable store
+// file (envelope or legacy document) without decrypting it.
+func probeStoreBytes(data []byte) error {
+	var probe struct {
+		Format string `json:"format"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if probe.Format == storeFormat {
+		var env storeEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			return err
+		}
+		if env.Version > storeEnvVer {
+			return fmt.Errorf("%w: store envelope version %d", ErrCorruptStore, env.Version)
+		}
+		return nil
+	}
+	var doc Document
+	return json.Unmarshal(data, &doc)
+}
+
+// loadBytesLocked installs parsed file content into the store.
+func (s *Store) loadBytesLocked(data []byte) error {
+	var probe struct {
+		Format string `json:"format"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrCorruptStore, s.path, err)
+	}
+	if probe.Format == storeFormat {
+		var env storeEnvelope
+		if err := json.Unmarshal(data, &env); err != nil {
+			return fmt.Errorf("%w: %s: %v", ErrCorruptStore, s.path, err)
+		}
+		s.sec.env = &env
+		s.sec.envKDF = env.KDF
+		s.sec.envWrapped = env.WrappedKey
+		s.sec.envPlatWrapped = env.PlatformWrappedKey
+		switch env.Mode {
+		case ModePassphrase:
+			s.sec.mode = ModePassphrase
+			s.sec.locked = true
+			s.sec.plainOnDisk = false
+			s.doc = Document{}
+		case ModeNone:
+			s.sec.mode = ModeNone
+			s.sec.plainOnDisk = true
+			if env.Document != nil {
+				s.doc = *env.Document
+			}
+		default:
+			return fmt.Errorf("%w: %s: unknown mode %q", ErrCorruptStore, s.path, env.Mode)
+		}
+		return nil
+	}
+	// Legacy bare JSON document (pre-Step-13).
+	var doc Document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrCorruptStore, s.path, err)
+	}
+	s.doc = doc
+	s.sec.mode = ModeNone
+	s.sec.legacy = true
+	s.sec.plainOnDisk = true
+	return nil
+}
+
+// Save persists the document atomically (write temp + fsync +
+// rename), with owner-only permissions because it contains
+// credentials. A locked store refuses: persisting the empty
+// locked-state document would destroy the sealed data.
 func (s *Store) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.maybeAutoLockLocked()
+	if s.sec.locked {
+		return ErrStoreLocked
+	}
 	return s.saveLocked()
 }
 
 func (s *Store) saveLocked() error {
+	if s.sec.locked {
+		return ErrStoreLocked
+	}
 	if s.path == "" {
 		return nil // in-memory store (tests)
 	}
-	data, err := json.MarshalIndent(&s.doc, "", "  ")
+	env, err := s.buildEnvelopeLocked()
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(s.path)
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		return err
+	}
+	// When this write replaces plaintext credentials with
+	// ciphertext (legacy migration / passphrase enablement), the
+	// old plaintext bytes are zero-filled before the rename so
+	// they do not linger in the freed inode.
+	overwrite := s.sec.plainOnDisk && env.Mode == ModePassphrase
+	if err := writeFileAtomic(s.path, data, overwrite); err != nil {
+		return err
+	}
+	s.sec.env = env
+	s.sec.legacy = false
+	s.sec.plainOnDisk = env.Mode == ModeNone
+	s.sec.touchLocked()
+	return nil
+}
+
+// writeFileAtomic writes data to path via temp file + fsync +
+// rename, so a crash or concurrent reader never sees a partial
+// file and the previous content survives a failed write. With
+// overwriteOld, the previous file's bytes are zero-filled and
+// fsynced before the rename (best-effort secure erase: SSD wear
+// levelling and copy-on-write filesystems can retain blocks
+// below the filesystem layer — documented in the Step 13 report,
+// not silently promised away).
+func writeFileAtomic(path string, data []byte, overwriteOld bool) error {
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if overwriteOld {
+		if old, err := os.OpenFile(path, os.O_WRONLY, 0o600); err == nil {
+			if info, err := old.Stat(); err == nil && info.Size() > 0 {
+				zeros := make([]byte, 32*1024)
+				remaining := info.Size()
+				for remaining > 0 {
+					n := int64(len(zeros))
+					if remaining < n {
+						n = remaining
+					}
+					if _, err := old.Write(zeros[:n]); err != nil {
+						break
+					}
+					remaining -= n
+				}
+				_ = old.Sync()
+			}
+			_ = old.Close()
+		}
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
-// Snapshot returns a copy of the document for read paths.
+// Snapshot returns a copy of the document for read paths. On a
+// locked store this is the empty document — credentials are
+// never exposed before Unlock (Step 13 lock semantics).
 func (s *Store) Snapshot() Document {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.maybeAutoLockLocked()
+	if !s.sec.locked {
+		s.sec.touchLocked()
+	}
 	return s.doc
 }
 
@@ -292,10 +486,12 @@ func (s *Store) UpsertSubscription(rec SubscriptionRecord) {
 	s.doc.Subscriptions = append(s.doc.Subscriptions, rec)
 }
 
-// Settings returns the persisted settings.
+// Settings returns the persisted settings (zero value while
+// the store is locked).
 func (s *Store) Settings() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.maybeAutoLockLocked()
 	return s.doc.Settings
 }
 
