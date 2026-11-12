@@ -67,10 +67,13 @@ build_gio() {
         echo "build-android: gogio needs an Android NDK (set ANDROID_NDK_HOME)" >&2
         exit 3
     fi
+    # gogio -version must be major.minor.patch.versioncode ("0.1.0.1"
+    # = versionName 0.1.0 + versionCode 1, matching the Gradle shell);
+    # a bare "1" is rejected as invalid semver (CI run 43290011677).
     echo "== Gio logic-build APK (gogio) =="
     mkdir -p "$ROOT/app/dist"
     (cd "$ROOT/app" && gogio -target android -appid org.relavia.client \
-        -version 1 -tags "$GO_TAGS" -o dist/relavia-logic.apk ./cmd/relavia-android)
+        -version 0.1.0.1 -tags "$GO_TAGS" -o dist/relavia-logic.apk ./cmd/relavia-android)
     ls -l "$ROOT/app/dist/relavia-logic.apk"
     sha256sum "$ROOT/app/dist/relavia-logic.apk"
 }
