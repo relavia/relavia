@@ -1,0 +1,349 @@
+// Package service is the platform-independent application
+// service layer of the client (proposal book 5.1): node/group
+// management, import, handshake scheduling, connection control
+// and traffic/log visibility, sitting between the UI and the
+// kernel adapter. Step 10 (Android) reuses this layer unchanged;
+// only the engine binding and the platform package differ.
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"openproxy/core/kernel"
+	"openproxy/core/specnode"
+)
+
+// Sentinel service-level errors. The UI maps these (and kernel
+// error kinds via kernel.KindOf) to localized strings; service
+// code never produces display text.
+var (
+	ErrNoNodeSelected = errors.New("service: no node selected")
+	ErrNoTestedNode   = errors.New("service: no successfully tested node available")
+	ErrNoEngine       = errors.New("service: no kernel engine configured")
+)
+
+// NodeView is one node as the UI presents it: the record plus its
+// recomputed risk classification.
+type NodeView struct {
+	Record   NodeRecord
+	Weak     bool
+	Insecure bool
+}
+
+// LogBuffer is a bounded in-memory ring of diagnostic log lines
+// (kernel output plus service events). Local only, never leaves
+// the device (book 8.1).
+type LogBuffer struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+}
+
+// NewLogBuffer creates a buffer holding at most max lines.
+func NewLogBuffer(max int) *LogBuffer {
+	if max <= 0 {
+		max = 500
+	}
+	return &LogBuffer{max: max}
+}
+
+// Add appends one line (timestamped by the caller-facing format).
+func (b *LogBuffer) Add(line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lines = append(b.lines, line)
+	if len(b.lines) > b.max {
+		b.lines = append([]string{}, b.lines[len(b.lines)-b.max:]...)
+	}
+}
+
+// Lines returns a copy of the buffered lines, oldest first.
+func (b *LogBuffer) Lines() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string{}, b.lines...)
+}
+
+// Clear empties the buffer (book 8.1: one-click clear).
+func (b *LogBuffer) Clear() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lines = nil
+}
+
+// Service wires the store, the kernel engine and the log buffer.
+type Service struct {
+	store      *Store
+	engine     Engine
+	logs       *LogBuffer
+	httpClient *http.Client
+
+	mu sync.Mutex // serializes engine lifecycle operations
+}
+
+// New builds a Service. engine may be nil (UI can still manage
+// nodes; connection operations then return ErrNoEngine).
+func New(store *Store, engine Engine) *Service {
+	return &Service{
+		store:      store,
+		engine:     engine,
+		logs:       NewLogBuffer(500),
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// Store exposes the underlying store (settings persistence).
+func (s *Service) Store() *Store { return s.store }
+
+// Logs returns the log buffer.
+func (s *Service) Logs() *LogBuffer { return s.logs }
+
+// OnKernelLog is the sink to hand to the engine (kernel log lines
+// for the local log view).
+func (s *Service) OnKernelLog(level, message string) {
+	s.logs.Add(fmt.Sprintf("%s [%s] %s", time.Now().Format("15:04:05"), level, message))
+}
+
+func (s *Service) logf(format string, args ...any) {
+	s.logs.Add(fmt.Sprintf("%s [service] %s", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...)))
+}
+
+// --- node/group views -------------------------------------------------
+
+// Groups returns group display names.
+func (s *Service) Groups() []string { return s.store.GroupNames() }
+
+// Nodes returns the records of one group ("" = ungrouped,
+// AllGroups = every node) in display order, as UI views.
+func (s *Service) Nodes(group string) []NodeView {
+	doc := s.store.Snapshot()
+	var out []NodeView
+	for _, rec := range doc.Nodes {
+		if group != AllGroups && rec.Node.Group != group {
+			continue
+		}
+		out = append(out, NodeView{
+			Record:   rec,
+			Weak:     WeakEncryption(rec.Node),
+			Insecure: InsecureSkipVerify(rec.Node),
+		})
+	}
+	return out
+}
+
+// AllGroups is the pseudo-group key selecting every node.
+const AllGroups = "\x00all"
+
+// NodeByID returns one view by ID.
+func (s *Service) NodeByID(id string) (NodeView, bool) {
+	rec, ok := s.store.NodeByID(id)
+	if !ok {
+		return NodeView{}, false
+	}
+	return NodeView{Record: rec, Weak: WeakEncryption(rec.Node), Insecure: InsecureSkipVerify(rec.Node)}, true
+}
+
+// DeleteNode removes a node (and persists).
+func (s *Service) DeleteNode(id string) bool {
+	ok := s.store.DeleteNode(id)
+	if ok {
+		_ = s.store.Save()
+		s.logf("node deleted: %s", id)
+	}
+	return ok
+}
+
+// MoveNode reorders a node in display order (and persists).
+func (s *Service) MoveNode(id string, dir int) bool {
+	ok := s.store.MoveNode(id, dir)
+	if ok {
+		_ = s.store.Save()
+	}
+	return ok
+}
+
+// AddGroup registers a group (and persists).
+func (s *Service) AddGroup(name string) {
+	s.store.AddGroup(name)
+	_ = s.store.Save()
+}
+
+// DeleteGroup removes a group, ungrouping its nodes (and persists).
+func (s *Service) DeleteGroup(name string) {
+	s.store.DeleteGroup(name)
+	_ = s.store.Save()
+}
+
+// --- handshake tests ----------------------------------------------------
+
+// TestNode runs a REAL protocol handshake (book 5.3: no ping
+// substitution) against one node and records the outcome on it.
+func (s *Service) TestNode(ctx context.Context, id string) (*kernel.HandshakeResult, error) {
+	if s.engine == nil {
+		return nil, ErrNoEngine
+	}
+	rec, ok := s.store.NodeByID(id)
+	if !ok {
+		return nil, ErrNoNodeSelected
+	}
+	res, err := s.engine.TestHandshakeNode(ctx, rec.Node)
+	if err != nil {
+		return nil, err
+	}
+	lt := &specnode.LastTest{At: res.TestedAt.UTC().Format(time.RFC3339), OK: res.OK}
+	if res.OK {
+		ms := float64(res.Latency.Microseconds()) / 1000.0
+		lt.LatencyMs = &ms
+	} else if res.Error != nil {
+		lt.Error = string(res.Error.Kind)
+	}
+	s.store.SetLastTest(id, lt)
+	_ = s.store.Save()
+	return res, nil
+}
+
+// TestGroup tests every node of a group sequentially (group ""
+// tests the ungrouped nodes; AllGroups tests everything). Results
+// are recorded per node; the returned slice aligns with the
+// group's display order and carries a nil result where the test
+// itself could not run.
+func (s *Service) TestGroup(ctx context.Context, group string) ([]*kernel.HandshakeResult, error) {
+	views := s.Nodes(group)
+	results := make([]*kernel.HandshakeResult, len(views))
+	for i, v := range views {
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		res, err := s.TestNode(ctx, v.Record.Node.ID)
+		if err != nil {
+			s.logf("test %s: %v", v.Record.Node.ID, err)
+			continue
+		}
+		results[i] = res
+	}
+	return results, nil
+}
+
+// --- connection control -------------------------------------------------
+
+// Mode returns the configured kernel run mode (default manual).
+func (s *Service) Mode() kernel.RunMode {
+	m := s.store.Settings().Mode
+	if m == "" {
+		return kernel.ModeManual
+	}
+	return kernel.RunMode(m)
+}
+
+// SetMode persists the run mode. Note the honesty contract: the
+// mode is a REQUEST. The engine refuses modes its platform layer
+// cannot honor (the current in-process integration honors only
+// manual), and Connect surfaces that refusal instead of silently
+// running another mode.
+func (s *Service) SetMode(mode kernel.RunMode) {
+	s.store.UpdateSettings(func(st *Settings) { st.Mode = string(mode) })
+	_ = s.store.Save()
+}
+
+// Connect starts the kernel with the chosen node. Kernel errors
+// keep their structured kind (kernel.KindOf) for the UI to map to
+// localized text.
+func (s *Service) Connect(ctx context.Context, id string) error {
+	if s.engine == nil {
+		return ErrNoEngine
+	}
+	rec, ok := s.store.NodeByID(id)
+	if !ok {
+		return ErrNoNodeSelected
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.engine.StartNode(ctx, rec.Node, kernel.PlatformOptions{Mode: s.Mode()}); err != nil {
+		s.logf("connect %s failed: %v", id, err)
+		return err
+	}
+	s.store.UpdateSettings(func(st *Settings) { st.SelectedNodeID = id })
+	_ = s.store.Save()
+	s.logf("connected: %s (%s)", rec.Node.Name, id)
+	return nil
+}
+
+// AutoSelectAndConnect picks the group's best node by the
+// AutoSelect rule (lowest latency, weak-encryption nodes
+// deprioritized) and connects to it.
+func (s *Service) AutoSelectAndConnect(ctx context.Context, group string) (*specnode.Node, error) {
+	views := s.Nodes(group)
+	recs := make([]NodeRecord, 0, len(views))
+	for _, v := range views {
+		recs = append(recs, v.Record)
+	}
+	n := AutoSelect(recs)
+	if n == nil {
+		return nil, ErrNoTestedNode
+	}
+	if err := s.Connect(ctx, n.ID); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// Disconnect stops the kernel (idempotent at the adapter).
+func (s *Service) Disconnect(ctx context.Context) error {
+	if s.engine == nil {
+		return ErrNoEngine
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.engine.Stop(ctx)
+	if err == nil {
+		s.logf("disconnected")
+	}
+	return err
+}
+
+// Status returns the engine status snapshot (idle when no engine).
+func (s *Service) Status() kernel.Status {
+	if s.engine == nil {
+		return kernel.Status{State: kernel.StateIdle}
+	}
+	return s.engine.Status()
+}
+
+// Traffic returns current traffic counters.
+func (s *Service) Traffic(ctx context.Context) (*kernel.TrafficStats, error) {
+	if s.engine == nil {
+		return nil, ErrNoEngine
+	}
+	return s.engine.QueryTraffic(ctx)
+}
+
+// MixedAddr returns the local listener address while running.
+func (s *Service) MixedAddr() string {
+	if s.engine == nil {
+		return ""
+	}
+	return s.engine.MixedAddr()
+}
+
+// Capabilities returns the engine's capability self-report (zero
+// value when no engine), for the UI's honest capability display.
+func (s *Service) Capabilities() kernel.Capabilities {
+	if s.engine == nil {
+		return kernel.Capabilities{}
+	}
+	return s.engine.Capabilities()
+}
+
+// SelectedNodeID returns the persisted selection.
+func (s *Service) SelectedNodeID() string { return s.store.Settings().SelectedNodeID }
+
+// SelectNode persists the UI selection.
+func (s *Service) SelectNode(id string) {
+	s.store.UpdateSettings(func(st *Settings) { st.SelectedNodeID = id })
+	_ = s.store.Save()
+}

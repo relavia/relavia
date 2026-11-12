@@ -27,6 +27,55 @@ jobs:
         working-directory: core
         run: go test -tags "with_quic with_utls with_wireguard with_gvisor" -timeout 20m ./singbox/
 
+  app:
+    name: app (client build / vet / test / i18n / windows cross-build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Install Gio Linux build dependencies
+        # Gio's Linux desktop backend links Vulkan/X11/Wayland
+        # headers; the Windows target below is CGO-free.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev libx11-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libx11-xcb-dev libxcursor-dev libxfixes-dev \
+            libxext-dev libwayland-dev libegl-dev libgles-dev
+      - name: Build
+        working-directory: app
+        run: go build ./...
+      - name: Vet
+        working-directory: app
+        run: go vet ./...
+      - name: Vet (Windows target — type-checks the Windows platform files)
+        working-directory: app
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go vet ./...
+      - name: Test
+        working-directory: app
+        run: go test ./...
+      - name: i18n gate (pack integrity + hardcoded-string scan, Step 9)
+        working-directory: app
+        run: go run ./tools/i18ncheck
+      - name: Cross-build Windows client (official kernel build tags)
+        working-directory: app
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -tags "with_quic with_utls with_wireguard with_gvisor" -o dist/relavia.exe ./cmd/relavia
+      - name: Upload Windows client artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-windows-amd64
+          path: app/dist/relavia.exe
+          if-no-files-found: error
+
   spec:
     name: spec (unified node model schema validation)
     runs-on: ubuntu-latest

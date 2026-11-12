@@ -1,0 +1,45 @@
+# i18ncheck whitelist — every entry needs the justification
+# comment directly above it (the checker enforces this).
+
+# Gio widget.Enum state value for the "all groups" radio; it is
+# an internal state key, never rendered (its label comes from
+# the group.all pack entry).
+all
+# SI byte-size formatting pattern (fmt string, not prose; the
+# words around it come from traffic.* pack entries).
+%.1f %ciB
+# stderr diagnostic prefix of the CLI entry point; not UI copy.
+relavia:
+# Diagnostic startup log line (log stream is diagnostic-grade:
+# the kernel itself logs in English; this line only ever appears
+# in the local log view, never as UI copy).
+fonts: no CJK font found on this machine; Chinese text may render as boxes until a CJK font (e.g. Microsoft YaHei / Noto Sans CJK) is installed
+# Tray menu item IDs (internal identifiers dispatched in a
+# switch; the rendered labels come from tray.* pack entries).
+show
+# (same: tray menu item ID)
+connect
+# (same: tray menu item ID)
+disconnect
+# (same: tray menu item ID)
+quit
+# runtime.GOOS value compared in a switch (OS identifier, not text).
+windows
+# (same: runtime.GOOS value)
+darwin
+# Windows environment variable name (OS constant, not text).
+WINDIR
+# Windows Fonts directory name (file-system constant, not text).
+Fonts
+# Font file names loaded from the OS font directory (file-system
+# constants, not text) — msyh: Microsoft YaHei.
+msyh.ttc
+# (same: font file name — msjh: Microsoft JhengHei)
+msjh.ttc
+# (same: font file name — MS Gothic)
+msgothic.ttc
+# (same: font file name — Malgun Gothic)
+malgun.ttf
+# SI byte-size suffix table indexed by exponent in FormatBytes
+# (unit symbols, not prose).
+KMGTPE

@@ -8,7 +8,7 @@
 
 ## 状态
 
-**阶段 0 地基中，未发布。** 本仓库目前只有立项文档、统一节点模型（已冻结）与内核适配层接口（待评审），尚无可用的客户端软件。请勿将本仓库的任何内容视为已发布产品。
+**开发中，未发布。** 仓库已包含统一节点模型（已冻结）、内核适配层与 sing-box 适配器、链接/订阅解析器，以及 Windows 客户端 MVP（Step 9，未经 Windows 真机验收）。请勿将本仓库的任何内容视为已发布产品。
 
 Relavia 是通用网络工具，不提供、不内置任何节点或订阅服务；用户须自行确保其使用符合所在地法律法规。
 
@@ -23,6 +23,8 @@ Relavia 是通用网络工具，不提供、不内置任何节点或订阅服务
 | [spec/unified-node-model.schema.json](spec/unified-node-model.schema.json) | 统一节点模型 JSON Schema |
 | [spec/VERSIONING.md](spec/VERSIONING.md) | 统一节点模型版本规则 |
 | [core/README.md](core/README.md) | 内核适配层接口与 mock（Step 6，待评审） |
+| [docs/step9-Windows客户端MVP.md](docs/step9-Windows客户端MVP.md) | Step 9：Windows 客户端 MVP 与多语言验收（含真机挂账清单） |
+| [app/README.md](app/README.md) | 客户端服务层、i18n 与桌面壳（Step 9） |
 | [GOVERNANCE.md](GOVERNANCE.md) | 治理：角色、继任、RFC 流程、DCO |
 | [SECURITY.md](SECURITY.md) | 安全政策与漏洞报告方式 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南（DCO 签署、提交与评审流程） |
@@ -32,6 +34,7 @@ Relavia 是通用网络工具，不提供、不内置任何节点或订阅服务
 ## 仓库结构
 
 - `core/` — 内核适配层（Go）：接口定义与 mock 实现。
+- `app/` — 客户端（Go）：平台无关服务层、三语 i18n、平台抽象、Gio 桌面壳。
 - `spec/` — 统一节点模型规范、示例与校验脚本（已冻结，只按其版本规则变更）。
 - `docs/` — 方案书与各 Step 交付文档。
 - `.github/workflows/` — CI 基线（core 构建/测试 + spec 校验）。
