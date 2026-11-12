@@ -2,22 +2,22 @@
 
 本文件汇总 Relavia 拟集成 / 已集成第三方组件的版权与许可证义务，依项目方案书 10.1 与 Step 2 许可证审计（docs/step2-许可证审计.md，硬门禁有条件通过）建立。
 
-- 当前状态（阶段 0）：下列组件均来自 Step 2 审计登记，**尚未实际集成进产品代码**；集成状态列随 Step 7 起逐步更新。
+- 当前状态（Step 7 后）：sing-box 已实际集成进产品代码（见下表第 1 行），其传递依赖随之进入构建；其余组件仍为审计登记、未集成。
 - 每个正式发布包必须随附本文件（审计义务清单第 7 条）。
-- 传递依赖的全量 SBOM 扫描于 Step 7 集成时补做并回填本文件（义务清单第 7 条后半）。
+- 传递依赖的全量 SBOM 扫描已于 Step 7 补做：`go list -m all` 共 **403 个模块**，底稿存 `docs/step7-sbom-modules.txt`（义务清单第 7 条后半已回填）。注：quic-go / wireguard-go / uTLS 实际以 sing-box 的 SagerNet/metacubex 分支形态传递进入（模块路径见 SBOM），其许可证分别为上游 MIT / MIT / BSD-3-Clause，分发义务与上游行相同。
 - 通用义务（义务清单第 2 条）：全产品不使用 sing-box/SagerNet、WireGuard/Wintun、OpenVPN、quic-go 的名称与标识暗示官方关联或背书；描述性提及与暗示性使用分开评审。
 
 ## 组件清单
 
 | # | 组件 | 官方仓库 | 许可证（原文确认） | 集成形态 | 当前状态 |
 |---|---|---|---|---|---|
-| 1 | sing-box | SagerNet/sing-box | GPL-3.0-or-later ＋ 名称/关联附加条款 | 一期主挂接内核 | 已审计，未集成 |
+| 1 | sing-box | SagerNet/sing-box | GPL-3.0-or-later ＋ 名称/关联附加条款 | 一期主挂接内核 | **已集成（Step 7，v1.14.4，进程内库形态，构建标签 with_quic/with_utls/with_wireguard/with_gvisor；授权声明原文存 docs/licenses/sing-box-授权声明.txt）** |
 | 2 | SoftEther VPN | SoftEtherVPN/SoftEtherVPN | Apache-2.0 | 第二梯队（VPN 类编排） | 已审计，未集成 |
 | 3 | OpenVPN（2.x） | OpenVPN/openvpn | GPL-2.0-only ＋ OpenSSL / Apache2 / LZO 链接例外 | 仅独立进程随附分发 | 已审计，未集成 |
-| 4 | wireguard-go | WireGuard/wireguard-go | MIT | WireGuard 隧道实现 | 已审计，未集成 |
+| 4 | wireguard-go | WireGuard/wireguard-go | MIT | WireGuard 隧道实现 | 已集成（Step 7 经 sing-box 传递，实际模块为 SagerNet 分支 github.com/sagernet/wireguard-go） |
 | 5 | Wintun | WireGuard/wintun | 源码 GPL-2.0；官方预编译 DLL 为专有 Prebuilt Binaries License；Go 绑定 MIT | 仅官方预编译签名 DLL | 已审计，未集成 |
-| 6 | quic-go | quic-go/quic-go | MIT（Logo/品牌资产除外） | QUIC 依赖（经 sing-box 传递） | 已审计，未集成 |
-| 7 | uTLS | refraction-networking/utls | BSD-3-Clause | TLS 指纹层依赖 | 已审计，未集成 |
+| 6 | quic-go | quic-go/quic-go | MIT（Logo/品牌资产除外） | QUIC 依赖（经 sing-box 传递） | 已集成（Step 7 经 sing-box 传递，实际模块为 SagerNet 分支 github.com/sagernet/quic-go） |
+| 7 | uTLS | refraction-networking/utls | BSD-3-Clause | TLS 指纹层依赖 | 已集成（Step 7 经 sing-box 传递，实际模块为 metacubex 分支 github.com/metacubex/utls） |
 | 8 | Xray-core | XTLS/Xray-core | MPL-2.0 | 备选内核 | 已审计，未集成 |
 
 ## 逐项分发义务（依审计报告第 5 节）
