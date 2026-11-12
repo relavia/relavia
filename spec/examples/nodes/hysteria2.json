@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000005",
+  "name": "示例-Hysteria2",
+  "protocol": "hysteria2",
+  "server": "hy2.example.com",
+  "port": 443,
+  "credential": {
+    "auth": "EXAMPLE_HY2_AUTH_DO_NOT_USE",
+    "obfsType": "salamander",
+    "obfsPassword": "EXAMPLE_OBFS_PASSWORD"
+  },
+  "security": {
+    "type": "tls",
+    "serverName": "hy2.example.com",
+    "alpn": [
+      "h3"
+    ],
+    "allowInsecure": false
+  },
+  "extraPorts": [
+    "20000-30000"
+  ],
+  "udp": true,
+  "source": {
+    "kind": "manual",
+    "ref": "manual-entry",
+    "authorization": "user-provided"
+  }
+}

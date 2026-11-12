@@ -1,0 +1,18 @@
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+dist/
+build/
+
+# Go workspace / caches
+go.work
+go.work.sum
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store

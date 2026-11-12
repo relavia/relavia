@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000010",
+  "name": "示例-SOCKS5",
+  "protocol": "socks5",
+  "server": "203.0.113.20",
+  "port": 1080,
+  "credential": {
+    "username": "EXAMPLE_USER",
+    "password": "EXAMPLE_PASSWORD_DO_NOT_USE"
+  },
+  "udp": true,
+  "source": {
+    "kind": "manual",
+    "ref": "manual-entry",
+    "authorization": "user-provided"
+  }
+}

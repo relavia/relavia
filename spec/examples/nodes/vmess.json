@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000003",
+  "name": "示例-VMess-gRPC",
+  "protocol": "vmess",
+  "server": "vmess.example.com",
+  "port": 443,
+  "credential": {
+    "uuid": "20000000-0000-4000-8000-000000000003",
+    "alterId": 0,
+    "cipher": "auto"
+  },
+  "transport": {
+    "type": "grpc",
+    "serviceName": "example-grpc-service"
+  },
+  "security": {
+    "type": "tls",
+    "serverName": "vmess.example.com",
+    "fingerprint": "chrome"
+  },
+  "udp": true,
+  "source": {
+    "kind": "manual",
+    "ref": "manual-entry",
+    "authorization": "user-provided"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000006",
+  "name": "示例-TUIC",
+  "protocol": "tuic",
+  "server": "tuic.example.com",
+  "port": 443,
+  "credential": {
+    "uuid": "20000000-0000-4000-8000-000000000006",
+    "password": "EXAMPLE_TUIC_PASSWORD_DO_NOT_USE"
+  },
+  "transport": {
+    "type": "quic",
+    "congestionControl": "bbr",
+    "udpRelayMode": "native"
+  },
+  "security": {
+    "type": "tls",
+    "serverName": "tuic.example.com",
+    "alpn": [
+      "h3"
+    ]
+  },
+  "udp": true,
+  "source": {
+    "kind": "manual",
+    "ref": "manual-entry",
+    "authorization": "user-provided"
+  }
+}

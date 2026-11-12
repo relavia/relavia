@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000007",
+  "name": "示例-WireGuard",
+  "protocol": "wireguard",
+  "server": "wg.example.com",
+  "port": 51820,
+  "credential": {
+    "privateKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "preSharedKey": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=",
+    "addresses": [
+      "10.66.66.2/32",
+      "fd42:42:42::2/128"
+    ],
+    "allowedIPs": [
+      "0.0.0.0/0",
+      "::/0"
+    ],
+    "dns": [
+      "198.51.100.53"
+    ],
+    "mtu": 1280,
+    "persistentKeepalive": 25
+  },
+  "udp": true,
+  "source": {
+    "kind": "file",
+    "ref": "example-wireguard.conf",
+    "authorization": "user-provided"
+  }
+}

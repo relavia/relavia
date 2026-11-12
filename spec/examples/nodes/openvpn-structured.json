@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000009",
+  "name": "示例-OpenVPN-结构化（VPN Gate 形态）",
+  "protocol": "openvpn",
+  "server": "public-vpn.example.com",
+  "port": 1194,
+  "credential": {
+    "proto": "udp",
+    "cipher": "AES-256-GCM",
+    "authDigest": "SHA256",
+    "username": "EXAMPLE_USER",
+    "password": "EXAMPLE_PASSWORD_DO_NOT_USE",
+    "caCert": "-----BEGIN CERTIFICATE-----\nEXAMPLE-CA-CERTIFICATE-NOT-REAL\n-----END CERTIFICATE-----"
+  },
+  "udp": true,
+  "source": {
+    "kind": "plugin",
+    "ref": "10000000-0000-4000-8000-0000000000f3",
+    "authorization": "vpngate-official-csv"
+  }
+}

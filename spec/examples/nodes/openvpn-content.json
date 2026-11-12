@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000008",
+  "name": "示例-OpenVPN-全文",
+  "protocol": "openvpn",
+  "credential": {
+    "configContent": "client\ndev tun\nproto udp\nremote vpn.example.com 1194\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nauth SHA256\ncipher AES-256-GCM\nauth-user-pass\n<ca>\n-----BEGIN CERTIFICATE-----\nEXAMPLE-CA-CERTIFICATE-NOT-REAL\n-----END CERTIFICATE-----\n</ca>\n",
+    "username": "EXAMPLE_USER",
+    "password": "EXAMPLE_PASSWORD_DO_NOT_USE"
+  },
+  "udp": true,
+  "source": {
+    "kind": "file",
+    "ref": "example-client.ovpn",
+    "authorization": "user-provided"
+  }
+}

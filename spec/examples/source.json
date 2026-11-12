@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-0000000000f3",
+  "kind": "plugin",
+  "name": "VPN Gate 公共中继（示例登记）",
+  "operator": "日本国立筑波大学研究生院（VPN Gate 学术实验项目）",
+  "authorization": {
+    "status": "A",
+    "basis": "vpngate-official-csv",
+    "termsUrl": "https://www.vpngate.net/cn/about_overview.aspx"
+  },
+  "dataFormat": "csv",
+  "updateIntervalMinutes": 60,
+  "homepage": "https://www.vpngate.net/"
+}

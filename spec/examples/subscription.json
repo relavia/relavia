@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-0000000000f1",
+  "name": "示例订阅",
+  "url": "https://example.com/subscription/EXAMPLE_TOKEN_DO_NOT_USE",
+  "format": "auto",
+  "userAgent": "clash-verge/1.0 (example)",
+  "enabled": true,
+  "updateIntervalMinutes": 1440,
+  "lastUpdatedAt": "2026-11-12T09:00:00Z",
+  "sourceId": null,
+  "groupName": "示例分组",
+  "traffic": {
+    "upload": 1073741824,
+    "download": 10737418240,
+    "total": 107374182400,
+    "expireAt": "2027-01-01T00:00:00Z"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000004",
+  "name": "示例-VLESS-Reality",
+  "protocol": "vless",
+  "server": "vless.example.com",
+  "port": "443",
+  "credential": {
+    "uuid": "20000000-0000-4000-8000-000000000004",
+    "flow": "xtls-rprx-vision",
+    "encryption": "none"
+  },
+  "transport": {
+    "type": "tcp",
+    "headerType": "none"
+  },
+  "security": {
+    "type": "reality",
+    "serverName": "www.example.com",
+    "publicKey": "EXAMPLE-REALITY-PUBLIC-KEY-NOT-REAL",
+    "shortId": "0123abcd",
+    "spiderX": "",
+    "fingerprint": "chrome"
+  },
+  "udp": true,
+  "source": {
+    "kind": "manual",
+    "ref": "manual-entry",
+    "authorization": "user-provided"
+  },
+  "group": "示例分组"
+}

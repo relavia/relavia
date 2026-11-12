@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000002",
+  "name": "示例-Trojan-WS",
+  "protocol": "trojan",
+  "server": "trojan.example.com",
+  "port": 443,
+  "credential": {
+    "password": "EXAMPLE_TROJAN_PASSWORD_DO_NOT_USE"
+  },
+  "transport": {
+    "type": "ws",
+    "path": "/example-ws",
+    "host": "cdn.example.com"
+  },
+  "security": {
+    "type": "tls",
+    "serverName": "trojan.example.com",
+    "alpn": [
+      "h2",
+      "http/1.1"
+    ],
+    "fingerprint": "chrome",
+    "allowInsecure": false
+  },
+  "udp": true,
+  "source": {
+    "kind": "subscription",
+    "ref": "10000000-0000-4000-8000-0000000000f1",
+    "authorization": "user-provided-subscription"
+  },
+  "group": "示例分组"
+}

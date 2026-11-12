@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0",
+  "id": "10000000-0000-4000-8000-000000000011",
+  "name": "示例-HTTPS代理",
+  "protocol": "http",
+  "server": "proxy.example.com",
+  "port": 8443,
+  "credential": {
+    "username": "EXAMPLE_USER",
+    "password": "EXAMPLE_PASSWORD_DO_NOT_USE"
+  },
+  "security": {
+    "type": "tls",
+    "serverName": "proxy.example.com"
+  },
+  "source": {
+    "kind": "manual",
+    "ref": "manual-entry",
+    "authorization": "user-provided"
+  }
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "file": "invalid-01-missing-server.json",
+    "target": "Node",
+    "reason": "VLESS 节点缺必填 server"
+  },
+  {
+    "file": "invalid-02-port-type.json",
+    "target": "Node",
+    "reason": "port 为字符串而非整数"
+  },
+  {
+    "file": "invalid-03-branch-mix.json",
+    "target": "Node",
+    "reason": "VLESS 凭据混入 Shadowsocks 专有字段 method（additionalProperties 拒绝）"
+  },
+  {
+    "file": "invalid-04-reality-no-pubkey.json",
+    "target": "Node",
+    "reason": "security.type=reality 但缺 publicKey"
+  },
+  {
+    "file": "invalid-05-wg-no-peerkey.json",
+    "target": "Node",
+    "reason": "WireGuard 缺 peerPublicKey"
+  },
+  {
+    "file": "invalid-06-unknown-protocol.json",
+    "target": "Node",
+    "reason": "protocol 为矩阵外未知值 shadowsocksr"
+  },
+  {
+    "file": "invalid-07-plugin-no-authorization.json",
+    "target": "Node",
+    "reason": "source.kind=plugin 但缺 authorization（违反 7.2）"
+  },
+  {
+    "file": "invalid-08-udp-type.json",
+    "target": "Node",
+    "reason": "udp 为字符串而非布尔"
+  },
+  {
+    "file": "invalid-09-none-with-sni.json",
+    "target": "Node",
+    "reason": "security.type=none 却携带 serverName（分支串用）"
+  }
+]
