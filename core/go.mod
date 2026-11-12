@@ -3,4 +3,6 @@
 // the organization name when the repository is created in Step 4.
 module openproxy/core
 
-go 1.23
+go 1.25.5
+
+require gopkg.in/yaml.v3 v3.0.1
