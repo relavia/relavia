@@ -207,10 +207,14 @@ func checkCompileInputs(n *specnode.Node) error {
 
 // Capabilities implements kernel.Adapter: the kernel-coordinate
 // matrix mirrored from supportedSpec(), plus this build's platform
-// facts. TUN / system-proxy / kill switch are reported FALSE: this
-// step integrates the kernel as an in-process local listener only;
+// facts. TUN / system-proxy are reported FALSE: this step
+// integrates the kernel as an in-process local listener only;
 // platform networking lands in Steps 9-12 and Start refuses those
-// modes explicitly instead of silently degrading.
+// modes explicitly instead of silently degrading. KillSwitch is
+// reported from the REAL Step 12 status source when one is
+// attached (Options.KillSwitchReport): true only at
+// ReadinessEnforceable — with no source attached (every build
+// Step 12 ships) it stays honestly false.
 func (a *Adapter) Capabilities() kernel.Capabilities {
 	tlsOnly := []kernel.SecurityType{kernel.SecurityTLS}
 	protocols := map[kernel.Protocol]kernel.ProtocolSupport{
@@ -263,7 +267,7 @@ func (a *Adapter) Capabilities() kernel.Capabilities {
 			Platform:              runtime.GOOS,
 			TUN:                   false,
 			SystemProxy:           false,
-			KillSwitch:            false,
+			KillSwitch:            a.killSwitchEnforceable(),
 			IPv6:                  false,
 			RequiresVPNPermission: false,
 		},

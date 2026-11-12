@@ -48,6 +48,7 @@ import (
 	"github.com/sagernet/sing/service"
 
 	"openproxy/core/kernel"
+	"openproxy/core/killswitch"
 	"openproxy/core/routecfg"
 	"openproxy/core/specnode"
 )
@@ -90,6 +91,18 @@ type Options struct {
 	// (package routecfg). Nil keeps the Step 7 behaviour:
 	// route.final = the node, no DNS section.
 	Routing *routecfg.Policy
+	// KillSwitchReport, when set, is the REAL status source
+	// for the kill switch (Step 12, package killswitch —
+	// typically a killswitch.Controller's Report method). The
+	// adapter consults it live: Capabilities reports
+	// Platform.KillSwitch=true, and Start honours a kill-switch
+	// request, ONLY when the source reports
+	// ReadinessEnforceable. Nil (the default, and the state of
+	// every build this step ships: the Step 12 policy layer is
+	// ready but no production Windows/Android enforcer is
+	// wired in) keeps the honest Step 7 report of false —
+	// policy-ready is NOT enforceable and is never rounded up.
+	KillSwitchReport func() killswitch.Report
 }
 
 // Adapter is a sing-box-backed kernel.Adapter. Safe for
@@ -138,6 +151,30 @@ func New(opts Options) *Adapter {
 	}
 	a.caps = a.Capabilities()
 	return a
+}
+
+// killSwitchEnforceable reports whether the attached Step 12
+// kill-switch status source (Options.KillSwitchReport) grades
+// enforcement as REAL right now. It is consulted live (not via
+// the construction-time capability snapshot) so a source whose
+// readiness changes is honoured at Start time.
+func (a *Adapter) killSwitchEnforceable() bool {
+	if a.opts.KillSwitchReport == nil {
+		return false
+	}
+	return a.opts.KillSwitchReport().Readiness == killswitch.ReadinessEnforceable
+}
+
+// KillSwitchReadiness exposes the graded Step 12 readiness for
+// UI/diagnostics: unavailable (no source attached),
+// policy-ready (state machine + compiled rules ready, platform
+// enforcement not real), or enforceable. Only enforceable ever
+// maps to Platform.KillSwitch=true.
+func (a *Adapter) KillSwitchReadiness() killswitch.Readiness {
+	if a.opts.KillSwitchReport == nil {
+		return killswitch.ReadinessUnavailable
+	}
+	return a.opts.KillSwitchReport().Readiness
 }
 
 // MixedAddr reports the local mixed inbound address while
@@ -259,9 +296,9 @@ func (a *Adapter) startInternal(ctx context.Context, n *specnode.Node, nodeID st
 		return kernel.NewError(kernel.KindPlatformUnavailable, "Start",
 			fmt.Sprintf("run mode %q is not available in this step's integration", mode), nil)
 	}
-	if opts.KillSwitch && !a.caps.Platform.KillSwitch {
+	if opts.KillSwitch && !a.killSwitchEnforceable() {
 		return kernel.NewError(kernel.KindPlatformUnavailable, "Start",
-			"kill switch requested but not enforceable by this step's integration (Step 12)", nil)
+			"kill switch requested but not enforceable: no attached kill-switch source reports enforceable (Step 12 policy layer is ready; production platform enforcement is pending — see docs/step12-断网保护.md)", nil)
 	}
 
 	a.mu.Lock()
