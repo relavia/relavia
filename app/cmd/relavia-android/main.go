@@ -1,10 +1,17 @@
-//go:build android
-
 // Command relavia-android is the Android entry point of the
 // Relavia client (Step 10): the Step 9 Gio shell and service
 // layer running on Android. It is built with gogio (Gio's
 // Android packager) — see scripts/build-android.sh and the CI
-// android job. The production APK additionally embeds the
+// android job.
+//
+// This file deliberately carries NO "//go:build android"
+// constraint: gogio resolves the package with a host-side
+// "go list" before cross-compiling, and an android-only
+// constraint makes that listing fail with "build constraints
+// exclude all Go files" (CI run 43289103659, Step 10 android
+// job). The package is only ever packaged for Android (the
+// gogio step above); platform differences live behind the
+// platform package's own per-OS files, as on desktop. The production APK additionally embeds the
 // Kotlin VpnService shell from the repo-root android/ directory,
 // which is the only component allowed to create the TUN
 // interface (book 8.2); the TUN connect choreography itself
