@@ -48,6 +48,7 @@ import (
 	"github.com/sagernet/sing/service"
 
 	"openproxy/core/kernel"
+	"openproxy/core/routecfg"
 	"openproxy/core/specnode"
 )
 
@@ -84,6 +85,11 @@ type Options struct {
 	// OnLog, when set, receives sing-box log lines. Default:
 	// discarded.
 	OnLog func(level, message string)
+	// Routing, when set, is the Step 11 routing/DNS policy
+	// compiled into every configuration this adapter starts
+	// (package routecfg). Nil keeps the Step 7 behaviour:
+	// route.final = the node, no DNS section.
+	Routing *routecfg.Policy
 }
 
 // Adapter is a sing-box-backed kernel.Adapter. Safe for
@@ -171,7 +177,11 @@ func (a *Adapter) ValidateSpec(_ context.Context, n *specnode.Node) error {
 	if err := checkSupported(n); err != nil {
 		return err
 	}
-	return checkCompileInputs(n)
+	if err := checkCompileInputs(n); err != nil {
+		return err
+	}
+	_, err := a.routingFragment()
+	return err
 }
 
 func (a *Adapter) validateKernelNode(cfg *kernel.Config) (*specnode.Node, error) {
@@ -185,7 +195,25 @@ func (a *Adapter) validateKernelNode(cfg *kernel.Config) (*specnode.Node, error)
 	if err := checkCompileInputs(spec); err != nil {
 		return nil, err
 	}
+	if _, err := a.routingFragment(); err != nil {
+		return nil, err
+	}
 	return spec, nil
+}
+
+// routingFragment compiles the adapter's Step 11 policy, if
+// any. A policy that fails to compile is a configuration
+// error and must surface at validation time, not mid-start.
+func (a *Adapter) routingFragment() (*routecfg.Fragment, error) {
+	if a.opts.Routing == nil {
+		return nil, nil
+	}
+	frag, err := routecfg.Compile(*a.opts.Routing)
+	if err != nil {
+		return nil, kernel.NewError(kernel.KindInvalidConfig, "Validate",
+			"routing policy does not compile", err)
+	}
+	return frag, nil
 }
 
 // --- lifecycle -----------------------------------------------------
@@ -256,11 +284,18 @@ func (a *Adapter) startInternal(ctx context.Context, n *specnode.Node, nodeID st
 	if err != nil {
 		return a.failStartLocked(kernel.NewError(kernel.KindInternal, "Start", "create instance temp dir", err))
 	}
+	fragment, err := a.routingFragment()
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return a.failStartLocked(kernel.NewError(kernel.KindInvalidConfig, "Start",
+			"routing policy does not compile", err))
+	}
 	configJSON, err := compileConfig(n, compileOptions{
 		listenHost: a.opts.ListenHost,
 		listenPort: port,
 		logLevel:   a.opts.LogLevel,
 		cachePath:  filepath.Join(dir, "cache.db"),
+		fragment:   fragment,
 	})
 	if err != nil {
 		_ = os.RemoveAll(dir)

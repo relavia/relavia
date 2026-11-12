@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"openproxy/core/kernel"
+	"openproxy/core/routecfg"
 	"openproxy/core/specnode"
 )
 
@@ -16,9 +17,11 @@ import (
 //	the node's outbound (or WireGuard endpoint) + a direct
 //	outbound + route.final pointing at the node.
 //
-// No DNS section is emitted: all addressing in this step is by
-// literal IP or the system resolver defaults of the kernel, and
-// routing/DNS policy is Step 11's deliverable, not Step 7's.
+// With no routing policy attached, no DNS section is emitted:
+// all addressing is by literal IP or the kernel's defaults.
+// Step 11 (package routecfg) supplies the routing/DNS policy
+// layer: when compileOptions.fragment is set, the fragment's
+// route and dns sections replace the bare route.final below.
 //
 // The map-based generation (instead of sing-box's option structs)
 // keeps the compiler readable against the JSON format users and
@@ -40,6 +43,11 @@ type compileOptions struct {
 	// file lock and time out at startup. Every instance
 	// therefore gets its own cache file in a private temp dir.
 	cachePath string
+	// fragment, when non-nil, is the Step 11 routing/DNS
+	// policy compiled by package routecfg. Its route section
+	// references this compiler's outbound tags ("out",
+	// "direct") by construction.
+	fragment *routecfg.Fragment
 }
 
 // compileConfig compiles a full client configuration for one node.
@@ -65,6 +73,10 @@ func compileConfig(n *specnode.Node, opts compileOptions) ([]byte, error) {
 			},
 		},
 		"route": map[string]any{"final": "out"},
+	}
+
+	if opts.fragment != nil {
+		opts.fragment.ApplyTo(cfg)
 	}
 
 	direct := map[string]any{"type": "direct", "tag": "direct"}

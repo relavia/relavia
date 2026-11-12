@@ -1,0 +1,16 @@
+{
+  "mode": "rule",
+  "bypass_private": true,
+  "ipv6": "on",
+  "dns": {
+    "remote": {
+      "type": "tls",
+      "server": "1.1.1.1",
+      "port": 853
+    },
+    "local": {
+      "type": "local"
+    }
+  },
+  "notes": "Relavia default security configuration: system-proxy mode. See core/routecfg/defaults/README.md."
+}
