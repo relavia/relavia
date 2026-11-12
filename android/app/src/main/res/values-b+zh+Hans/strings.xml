@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bootstrap fallbacks, Simplified Chinese. Source of truth:
+     app/locales/zh-Hans (android.* keys) — see values/strings.xml. -->
+<resources>
+    <string name="app_name">Relavia</string>
+    <string name="notif_channel_name">连接状态通知</string>
+    <string name="notif_title_connected">Relavia VPN 已连接</string>
+    <string name="notif_text_connected">当前节点：%1$s</string>
+    <string name="notif_title_connecting">正在连接…</string>
+    <string name="notif_action_disconnect">断开连接</string>
+    <string name="vpn_permission_denied">未获得 VPN 权限，无法建立连接。你可以在下次连接时再次授权。</string>
+    <string name="main_status_idle">未连接</string>
+    <string name="main_connect">连接</string>
+    <string name="main_disconnect">断开</string>
+</resources>

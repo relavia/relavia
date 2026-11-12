@@ -76,6 +76,45 @@ jobs:
           path: app/dist/relavia.exe
           if-no-files-found: error
 
+  android:
+    name: android (cross-compile gate / kotlin shell APK / gio logic APK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: GOOS=android cross-compile gate (service / i18n / platform / bridge)
+        run: ./scripts/build-android.sh check
+      - name: Kotlin VpnService shell APK (Gradle assembleDebug)
+        run: ./scripts/build-android.sh shell
+      - name: Upload shell APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-android-shell-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Install gogio
+        run: go install gioui.org/cmd/gogio@v0.10.3
+      - name: Gio logic-build APK (gogio, NDK from the runner image)
+        run: |
+          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          export PATH="$HOME/go/bin:$PATH"
+          ./scripts/build-android.sh gio
+      - name: Upload Gio logic APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-android-logic
+          path: app/dist/relavia-logic.apk
+          if-no-files-found: error
+
   plugins:
     name: plugins (source plugins build / vet / test)
     runs-on: ubuntu-latest

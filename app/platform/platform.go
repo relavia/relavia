@@ -16,8 +16,13 @@
 //     TUN device is Step 11/12 work and returns ErrUnavailable.
 //   - Windows tray: real Shell_NotifyIcon implementation
 //     (icon, tooltip, popup menu), compile-verified only.
-//   - Non-Windows: unsupported implementations plus in-memory
-//     fakes used by the tests and by Linux development builds.
+//   - Android (Step 10): no system-proxy mode exists (book 8.2);
+//     the TUN facility is the OS VpnService, reached through the
+//     shell bridge in vpn.go — available only when the shell has
+//     registered its binder.
+//   - Non-Windows desktops: unsupported implementations plus
+//     in-memory fakes used by the tests and by Linux development
+//     builds.
 package platform
 
 import (

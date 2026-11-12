@@ -43,3 +43,9 @@ malgun.ttf
 # SI byte-size suffix table indexed by exponent in FormatBytes
 # (unit symbols, not prose).
 KMGTPE
+# Android build environment variable naming the store-path
+# override (build/OS constant, not text).
+RELAVIA_STORE
+# Android build environment variable enabling the fake VPN
+# binder in logic-validation builds (build/OS constant).
+RELAVIA_FAKE_VPN

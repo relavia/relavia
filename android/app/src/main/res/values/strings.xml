@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Bootstrap fallback strings for the Android shell.
+
+  These are NOT the product's string table. The single source
+  of truth for all user-visible text is the trilingual packs in
+  app/locales (keys android.*), resolved at runtime through
+  GoBridge.text(). These resources exist only for surfaces that
+  must render before the Go runtime is bound (launcher label,
+  first notification) — and they are kept in the same three
+  languages (this file: English; values-b+zh+Hans;
+  values-b+zh+Hant) so even the fallbacks are never
+  single-language. Keep keys and wording in step with the
+  packs; the packs win on any divergence.
+-->
+<resources>
+    <string name="app_name">Relavia</string>
+    <string name="notif_channel_name">Connection status</string>
+    <string name="notif_title_connected">Relavia VPN connected</string>
+    <string name="notif_text_connected">Current node: %1$s</string>
+    <string name="notif_title_connecting">Connecting…</string>
+    <string name="notif_action_disconnect">Disconnect</string>
+    <string name="vpn_permission_denied">VPN permission was not granted, so no connection could be established. You can grant it next time you connect.</string>
+    <string name="main_status_idle">Not connected</string>
+    <string name="main_connect">Connect</string>
+    <string name="main_disconnect">Disconnect</string>
+</resources>
