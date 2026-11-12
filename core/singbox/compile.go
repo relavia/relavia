@@ -79,23 +79,35 @@ func compileConfig(n *specnode.Node, opts compileOptions) ([]byte, error) {
 		opts.fragment.ApplyTo(cfg)
 	}
 
+	if err := applyNodeOutbounds(cfg, n); err != nil {
+		return nil, err
+	}
+	return json.Marshal(cfg)
+}
+
+// applyNodeOutbounds installs the node's outbound (tag "out",
+// or the WireGuard endpoint of the same tag) plus the "direct"
+// outbound into cfg. Shared by compileConfig (mixed inbound,
+// desktop) and CompileTunConfig (tun inbound, Android/libbox):
+// one node -> one outbound construction, whatever the inbound.
+func applyNodeOutbounds(cfg map[string]any, n *specnode.Node) error {
 	direct := map[string]any{"type": "direct", "tag": "direct"}
 
 	if n.Protocol == specnode.ProtocolWireGuard {
 		ep, err := buildWireGuardEndpoint(n)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		cfg["endpoints"] = []any{ep}
 		cfg["outbounds"] = []any{direct}
-	} else {
-		ob, err := buildOutbound(n)
-		if err != nil {
-			return nil, err
-		}
-		cfg["outbounds"] = []any{ob, direct}
+		return nil
 	}
-	return json.Marshal(cfg)
+	ob, err := buildOutbound(n)
+	if err != nil {
+		return err
+	}
+	cfg["outbounds"] = []any{ob, direct}
+	return nil
 }
 
 func compileErr(format string, args ...any) error {

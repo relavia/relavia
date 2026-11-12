@@ -10,15 +10,29 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 
 /**
- * The shell's single Activity (Step 10): owns the two things
- * Android reserves for an Activity — the VpnService consent
- * flow (VpnService.prepare) and the POST_NOTIFICATIONS runtime
- * request — plus minimal start/stop controls so the shell is
- * exercisable on its own. The product UI is the Go/Gio surface;
- * this Activity is deliberately not it.
+ * The shell's single Activity (Step 10, libbox-bound): owns the
+ * things Android reserves for an Activity — the VpnService
+ * consent flow (VpnService.prepare) and the POST_NOTIFICATIONS
+ * runtime request — plus minimal start/stop controls so the
+ * shell is exercisable on its own. The product UI is the
+ * Go/Gio surface; this Activity is deliberately not it.
+ *
+ * Connect/disconnect now drive the Go session
+ * (GoBridge.sessionStart/sessionStop) on a background thread:
+ * the session's choreography calls back into the shell through
+ * ShellBridgeImpl for consent, interface establishment and
+ * teardown. The service is started by the bridge when Go asks
+ * for the interface — this Activity must NOT start it directly
+ * anymore.
+ *
+ * The Activity doubles as the consent surface for
+ * bridge-initiated connects (ACTION_CONSENT from
+ * ShellBridgeImpl.prepare, e.g. when a future Gio surface
+ * starts a session without this Activity's own button flow):
+ * it runs the same dialog and reports the outcome to the
+ * bridge latch instead of starting a session itself.
  *
  * All visible text comes from string resources, which are the
  * bootstrap fallbacks of the trilingual packs (see res/values*
@@ -29,8 +43,16 @@ class MainActivity : Activity() {
 
     private lateinit var statusView: TextView
 
+    /** True while this instance serves a ShellBridgeImpl consent request. */
+    private var consentForBridge: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Bring the Go runtime up first so pack-backed text is
+        // available to everything below (falls back silently in
+        // unbound builds).
+        ShellRuntime.ensureStarted(this)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -55,6 +77,31 @@ class MainActivity : Activity() {
         setContentView(root)
 
         requestNotificationPermission()
+
+        if (intent?.action == ACTION_CONSENT) {
+            handleConsentAction()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_CONSENT) {
+            handleConsentAction()
+        }
+    }
+
+    /** Bridge-initiated consent: dialog only, result to the bridge latch. */
+    private fun handleConsentAction() {
+        consentForBridge = true
+        val consent = VpnService.prepare(this)
+        if (consent == null) {
+            ShellBridgeImpl.onConsentResult(true)
+            finish()
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityForResult(consent, REQ_VPN_CONSENT)
+        }
     }
 
     private fun requestConnect() {
@@ -65,32 +112,48 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             startActivityForResult(consent, REQ_VPN_CONSENT)
         } else {
-            startVpn()
+            startSessionAsync()
         }
     }
 
     private fun requestDisconnect() {
-        startService(Intent(this, RelaviaVpnService::class.java).setAction(RelaviaVpnService.ACTION_STOP))
-        statusView.text = getString(R.string.main_status_idle)
+        Thread {
+            GoBridge.sessionStop()
+            runOnUiThread {
+                statusView.text = getString(R.string.main_status_idle)
+            }
+        }.start()
     }
 
-    private fun startVpn() {
-        ContextCompat.startForegroundService(
-            this,
-            Intent(this, RelaviaVpnService::class.java).setAction(RelaviaVpnService.ACTION_START),
-        )
-        statusView.text = GoBridge.text(
-            "android.notif_title_connecting",
-            getString(R.string.notif_title_connecting),
-        )
+    private fun startSessionAsync() {
+        statusView.text = getString(R.string.notif_title_connecting)
+        Thread {
+            val ok = GoBridge.sessionStart()
+            runOnUiThread {
+                statusView.text = if (ok) {
+                    GoBridge.text("android.notif_title_connected", getString(R.string.notif_title_connected))
+                } else {
+                    getString(R.string.vpn_permission_denied)
+                }
+            }
+        }.start()
     }
 
     @Deprecated("Activity result API kept for the thin shell; the consent flow is a single request")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != REQ_VPN_CONSENT) return
+        if (consentForBridge) {
+            // Report to the bridge latch and leave; the Go
+            // session waiting in prepare() proceeds (or fails)
+            // on its own thread.
+            consentForBridge = false
+            ShellBridgeImpl.onConsentResult(resultCode == RESULT_OK)
+            finish()
+            return
+        }
         if (resultCode == RESULT_OK) {
-            startVpn()
+            startSessionAsync()
         } else {
             statusView.text = GoBridge.text(
                 "android.vpn_permission_denied",
@@ -108,6 +171,9 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        /** Intent action: run the consent dialog for ShellBridgeImpl.prepare(). */
+        const val ACTION_CONSENT = "org.relavia.client.action.CONSENT"
+
         private const val REQ_VPN_CONSENT = 1001
         private const val REQ_NOTIFICATIONS = 1002
     }

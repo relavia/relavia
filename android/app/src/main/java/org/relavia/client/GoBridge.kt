@@ -1,46 +1,53 @@
 package org.relavia.client
 
+import org.relavia.libboxbind.Libboxbind
+
 /**
- * The Kotlin <-> Go bridge surface (Step 10 architecture ruling,
- * docs/step10-Android客户端MVP.md).
+ * The Kotlin <-> Go bridge surface (libbox binding;
+ * docs/libbox绑定.md).
  *
- * The native side of these functions is provided by the Go
- * runtime once it is bound into the APK (gomobile/libbox build).
- * That binding does not exist yet, so every entry point here is
- * wrapped defensively: a missing native side is caught and
- * reported as "not bound", and the shell degrades honestly
- * (bootstrap string resources, no tunnel) instead of crashing.
+ * Step 10 shipped this file with hand-declared JNI `external
+ * fun`s that no build could satisfy yet — an honest placeholder
+ * that always answered "not bound". The gomobile AAR now
+ * provides the real surface: the generated facade
+ * [org.relavia.libboxbind.Libboxbind] (bound from the Go
+ * package openproxy/app/libboxbind). This object is a defensive
+ * wrapper over that facade:
  *
- * Once the libbox AAR lands, the Go side implements:
- *  - localize(key): resolve a string from the trilingual packs
- *    in app/locales — the single source of truth for ALL shell
- *    text, including notifications (book 3.6, multilingual
- *    native). Keys used by the shell are the android.* keys.
- *  - onTunEstablished(fd): take ownership of the established
- *    TUN file descriptor and start the data plane.
- *  - onTunClosed(): the interface is gone; stop the data plane.
+ *  - In the merged release APK the facade is present and every
+ *    call reaches Go; [bound] flips true on first contact.
+ *  - In a pure-Kotlin build WITHOUT the AAR (the shell can
+ *    still be compiled alone for shell-only work), the facade
+ *    class is absent: calls fail with linkage errors, which are
+ *    caught here and reported as "not bound" — the shell then
+ *    degrades to bootstrap resources and refuses to start a
+ *    tunnel rather than blackholing traffic. That build is a
+ *    development variant, never a release artifact (CI builds
+ *    the shell only after the AAR exists).
+ *
+ * The call direction inverted versus the Step 10 placeholder:
+ * the shell no longer hands a self-established fd "up" to Go.
+ * Go's session drives the choreography and calls DOWN into the
+ * shell through the ShellBridge interface (see
+ * [ShellBridgeImpl]) whenever it needs the platform: consent,
+ * TUN establishment, protect(), notifications.
  */
 object GoBridge {
-
-    @JvmStatic
-    private external fun localize(key: String): String?
-
-    @JvmStatic
-    private external fun onTunEstablished(fd: Int): Boolean
-
-    @JvmStatic
-    private external fun onTunClosed()
 
     /** True when the Go runtime answered at least once. */
     @Volatile
     var bound: Boolean = false
         private set
 
-    /** Resolve [key] from the Go packs, or [fallback] when unbound. */
+    fun markBound() {
+        bound = true
+    }
+
+    /** Resolve [key] from the Go packs, or [fallback] when unbound/unknown. */
     fun text(key: String, fallback: String): String {
         return try {
-            val v = localize(key)
-            if (v != null) {
+            val v = Libboxbind.localize(key)
+            if (!v.isNullOrEmpty()) {
                 bound = true
                 v
             } else {
@@ -48,32 +55,72 @@ object GoBridge {
             }
         } catch (e: UnsatisfiedLinkError) {
             fallback
+        } catch (e: NoClassDefFoundError) {
+            fallback
         } catch (e: Exception) {
             fallback
         }
     }
 
-    /** Hand the TUN fd to the Go data plane. False = not bound. */
-    fun tunEstablished(fd: Int): Boolean {
+    /**
+     * Start the Go app session (connect the selected node).
+     * Blocking — consent waits, interface establishment and the
+     * box start all happen inside; call off the UI thread.
+     * False = unbound or the session failed (see [sessionStatus]).
+     */
+    fun sessionStart(): Boolean {
         return try {
-            val ok = onTunEstablished(fd)
-            if (ok) bound = true
-            ok
+            Libboxbind.startSession()
+            bound = true
+            true
         } catch (e: UnsatisfiedLinkError) {
             false
+        } catch (e: NoClassDefFoundError) {
+            false
         } catch (e: Exception) {
+            // A thrown start still proves the binding exists.
+            bound = true
             false
         }
     }
 
-    /** Tell the Go side the interface went away. Best effort. */
-    fun tunClosed() {
+    /** Stop the Go app session (choreographed disconnect). Blocking. */
+    fun sessionStop() {
         try {
-            onTunClosed()
+            Libboxbind.stopSession()
+            bound = true
         } catch (e: UnsatisfiedLinkError) {
             // Not bound; nothing to stop.
+        } catch (e: NoClassDefFoundError) {
+            // Not bound; nothing to stop.
         } catch (e: Exception) {
-            // Best effort only; the fd close is authoritative.
+            // Best effort; local teardown in the service is authoritative.
+        }
+    }
+
+    /** "connected" / "error: ..." / "idle" / "unbound". */
+    fun sessionStatus(): String {
+        return try {
+            Libboxbind.sessionStatus() ?: "unbound"
+        } catch (e: UnsatisfiedLinkError) {
+            "unbound"
+        } catch (e: NoClassDefFoundError) {
+            "unbound"
+        } catch (e: Exception) {
+            "unbound"
+        }
+    }
+
+    /** Tell Go the system revoked the VPN interface. Best effort. */
+    fun notifyTunRevoked() {
+        try {
+            Libboxbind.notifyTunRevoked()
+        } catch (e: UnsatisfiedLinkError) {
+            // Not bound; nothing to notify.
+        } catch (e: NoClassDefFoundError) {
+            // Not bound; nothing to notify.
+        } catch (e: Exception) {
+            // Best effort only; the local teardown is authoritative.
         }
     }
 }

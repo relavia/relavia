@@ -19,6 +19,8 @@
 | 6 | quic-go | quic-go/quic-go | MIT（Logo/品牌资产除外） | QUIC 依赖（经 sing-box 传递） | 已集成（Step 7 经 sing-box 传递，实际模块为 SagerNet 分支 github.com/sagernet/quic-go） |
 | 7 | uTLS | refraction-networking/utls | BSD-3-Clause | TLS 指纹层依赖 | 已集成（Step 7 经 sing-box 传递，实际模块为 metacubex 分支 github.com/metacubex/utls） |
 | 8 | Xray-core | XTLS/Xray-core | MPL-2.0 | 备选内核 | 已审计，未集成 |
+| 9 | filippo.io/age | FiloSottile/age | BSD-3-Clause | libbox 依赖（经 sing-box experimental/libbox 传递：其配置/档案加密） | 已集成（libbox 绑定，v1.3.1；实际编入 AAR 的依赖闭包经 `go list -deps` 核实；同图谱的 c2sp.org/CCTV/age 仅为 age 自身 go.mod 的图谱条目，不编入） |
+| 10 | filippo.io/hpke | FiloSottile/hpke（filippo.io/hpke） | BSD-3-Clause | age 的 HPKE 依赖（经 libbox 传递） | 已集成（libbox 绑定，v0.4.0，随 age 编入） |
 
 ## 逐项分发义务（依审计报告第 5 节）
 
@@ -30,3 +32,4 @@
 6. **quic-go**：保留版权与许可声明；不得使用其 Logo/品牌资产。个别源文件可能带其他宽松许可头，于 Step 7 SBOM 扫描时一并登记。
 7. **uTLS**：源码与二进制分发均保留版权声明、许可条款与免责声明；不得以版权方/贡献者名义为衍生产品背书。
 8. **Xray-core**：若启用，其源文件保持 MPL-2.0（义务清单第 6 条）：修改其文件后分发须以 MPL-2.0 提供该等文件源码并告知获取方式；不移除或篡改许可声明；执行体分发须告知接收者如何获取 MPL 部分源码；仓库内标清 MPL/GPL 文件边界；MPL 不授予商标权。
+9. **filippo.io/age / filippo.io/hpke**：BSD-3-Clause 义务：源码与二进制分发均保留版权声明、许可条款与免责声明；不得以版权方/贡献者名义为衍生产品背书。随 libbox AAR 分发时其声明随 sing-box 的 GPL 对应源码义务一并提供（本仓库公开即满足）。构建工具 sagernet/gomobile（BSD-3-Clause）仅为构建期工具，不分发、不构成产品依赖，故不入逐项义务。

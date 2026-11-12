@@ -4,13 +4,16 @@ go 1.25.5
 
 require (
 	gioui.org v0.10.3
+	github.com/sagernet/sing-box v1.14.4
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
 	openproxy/core v0.0.0
 )
 
 require (
+	filippo.io/age v1.3.1 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
+	filippo.io/hpke v0.4.0 // indirect
 	gioui.org/shader v1.0.9 // indirect
 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
 	github.com/ajg/form v1.5.1 // indirect
@@ -129,7 +132,6 @@ require (
 	github.com/sagernet/nftables v0.3.0-mod.4 // indirect
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.12 // indirect
 	github.com/sagernet/sing v0.9.7-0.20261023115459-5dc452e537bf // indirect
-	github.com/sagernet/sing-box v1.14.4 // indirect
 	github.com/sagernet/sing-cloudflared v0.1.4-0.20261021152903-2d40d788fcf6 // indirect
 	github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475 // indirect
 	github.com/sagernet/sing-openconnect v0.1.1-0.20260929151225-cbd68c45de58 // indirect

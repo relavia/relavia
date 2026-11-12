@@ -58,7 +58,12 @@ jobs:
         run: go vet ./...
       - name: Test
         working-directory: app
-        run: go test ./...
+        # -checklinkname=0: app/libboxbind links libbox, whose
+        # internals use //go:linkname into restricted runtime
+        # symbols; test binaries do not link without the flag.
+        # Upstream's own libbox ldflags carry the same flag
+        # (docs/libbox绑定.md §6).
+        run: go test -ldflags=-checklinkname=0 ./...
       - name: i18n gate (pack integrity + hardcoded-string scan, Step 9)
         working-directory: app
         run: go run ./tools/i18ncheck
@@ -77,7 +82,7 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: android (cross-compile gate / kotlin shell APK / gio logic APK)
+    name: android (cross-compile gate / libbox AAR / merged APK / gio logic APK)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,14 +96,37 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
-      - name: GOOS=android cross-compile gate (service / i18n / platform / bridge)
+      - name: GOOS=android cross-compile gate (service / i18n / platform / bridge / libboxbind)
         run: ./scripts/build-android.sh check
-      - name: Kotlin VpnService shell APK (Gradle assembleDebug)
-        run: ./scripts/build-android.sh shell
-      - name: Upload shell APK artifact
+      - name: Install gomobile (SagerNet fork, version pinned by sing-box v1.14.4's Makefile)
+        run: |
+          go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+          go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+      - name: libbox binding AAR (gomobile bind, NDK from the runner image)
+        run: |
+          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          export PATH="$HOME/go/bin:$PATH"
+          ./scripts/build-android.sh bind
+      - name: Upload libbox AAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: relavia-android-shell-debug
+          name: relavia-android-libbox-aar
+          path: android/app/libs/libboxbind.aar
+          if-no-files-found: error
+      - name: Merged APK — Kotlin shell + libbox AAR (Gradle assembleDebug)
+        run: ./scripts/build-android.sh shell
+      - name: Verify merged APK (native library present, permission set unchanged)
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$APK"
+          unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a|x86_64)/libgojni\.so'
+          AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
+          "$AAPT2" dump permissions "$APK"
+          test "$("$AAPT2" dump permissions "$APK" | grep -c 'uses-permission:')" -eq 5
+      - name: Upload merged APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-android-merged-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - name: Install gogio

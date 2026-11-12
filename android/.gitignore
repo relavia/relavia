@@ -4,3 +4,6 @@ build/
 local.properties
 *.apk
 *.aab
+# gomobile bind output (scripts/build-android.sh bind) — a
+# build artifact, regenerated in CI; never committed.
+app/libs/*.aar

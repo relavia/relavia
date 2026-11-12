@@ -33,4 +33,14 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
+    // The libbox data-plane binding (docs/libbox绑定.md): a
+    // gomobile AAR built from the Go package app/libboxbind by
+    // `scripts/build-android.sh bind` (CI android job, before
+    // this Gradle build). The AAR is a build artifact — it is
+    // gitignored and never committed. Its absence is a BUILD
+    // ERROR by design (the Kotlin shell references the
+    // generated org.relavia.libboxbind facade): a shell APK
+    // without the data plane must never be producible by
+    // accident.
+    implementation(files("libs/libboxbind.aar"))
 }
