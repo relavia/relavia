@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"strings"
 	"sync"
 	"time"
@@ -80,7 +81,24 @@ type App struct {
 	groupList widget.List
 	rowBtns   map[string]*rowButtons
 
-	connectBtn, disconnectBtn, autoBtn, testAllBtn widget.Clickable
+	disconnectBtn widget.Clickable
+
+	// v3 first-screen and page controls.
+	heroBtn, heroRetryBtn, heroReasonBtn widget.Clickable
+	checkAllBtn, guideBtn, recBtn        widget.Clickable
+	detourBtn, searchClearBtn            widget.Clickable
+	riskLinkBtn, viewAllBtn, errStripBtn widget.Clickable
+	pickedBtns                           [3]widget.Clickable
+	methodBtns                           [3]widget.Clickable
+	themeBtns                            [4]widget.Clickable
+	// expandedMethod is the import page's open method row
+	// (0 = none, 1..3 = links / subscription / file).
+	expandedMethod int
+	// menuOpenID is the node whose overflow strip is open.
+	menuOpenID string
+	// themeID caches the resolved palette id so the material
+	// theme is only re-synced when the palette changes.
+	themeID string
 
 	// searchEd filters the node list (name / address / group),
 	// applied on the layout goroutine from its current text.
@@ -96,17 +114,18 @@ type App struct {
 	importBtn, urlBtn, fileBtn, fileGoBtn widget.Clickable
 	showFilePath                          bool
 
-	// VPN Gate source controls (Import tab sources section) and
-	// its risk-gate page state. showVPNGateRisk is touched only
-	// on the layout goroutine (click handlers run in layout).
+	// VPN Gate source controls (Import tab sources section).
+	// The risk gate itself is the bottom sheet: sheet is nil
+	// while closed and is touched only on the layout goroutine.
 	vgRiskBtn, vgEnableBtn, vgRefreshBtn, vgRevokeBtn widget.Clickable
-	vgConfirmBtn, vgDeclineBtn                        widget.Clickable
-	showVPNGateRisk                                   bool
+	sheet                                             *riskSheetState
+	sheetAgreeBtn, sheetCloseBtn                      widget.Clickable
+	sheetFullBtn, sheetScrimBtn                       widget.Clickable
 
 	logList      widget.List
 	importList   widget.List
 	settingsList widget.List
-	riskList     widget.List
+	sheetList    widget.List
 	clearLog     widget.Clickable
 
 	// langEnum stores the settings language value; the custom
@@ -132,6 +151,17 @@ type App struct {
 	importFailKey string
 	importNote    string
 
+	// heroStage / heroErr / heroFailed carry the one-tap
+	// connect chain's progress for the hero card (stageNone =
+	// not running); autoPickedFlag marks a connection made by
+	// the chain's auto-select; helpHint is the guide-open
+	// failure line. All guarded by mu like the fields above.
+	heroStage      heroStage
+	heroErr        error
+	heroFailed     bool
+	autoPickedFlag bool
+	helpHint       string
+
 	trafficMu    chan struct{}
 	trafficStats *kernel.TrafficStats // last successful counter sample
 	trafficOK    bool
@@ -139,6 +169,7 @@ type App struct {
 
 type rowButtons struct {
 	selectBtn, testBtn, delBtn, favBtn widget.Clickable
+	menuBtn, connBtn                   widget.Clickable
 }
 
 // New builds the shell around a service and translator.
@@ -159,7 +190,7 @@ func New(svc *service.Service, tr *i18n.Translator, th *material.Theme) *App {
 	a.logList.List.Axis = layout.Vertical
 	a.importList.List.Axis = layout.Vertical
 	a.settingsList.List.Axis = layout.Vertical
-	a.riskList.List.Axis = layout.Vertical
+	a.sheetList.List.Axis = layout.Vertical
 	a.linksEd.Submit = false
 	a.groupEnum.Value = "all"
 	a.langEnum.Value = tr.Lang()
@@ -255,22 +286,75 @@ func (a *App) modeButton(value string) *widget.Clickable {
 
 // Layout renders one frame and processes widget events.
 func (a *App) Layout(gtx layout.Context) layout.Dimensions {
+	a.applyTheme()
 	a.handleClicks(gtx)
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Min
-			paint.FillShape(gtx.Ops, colBg, clip.Rect{Max: size}.Op())
+			paint.FillShape(gtx.Ops, pal.Bg, clip.Rect{Max: size}.Op())
 			return layout.Dimensions{Size: size}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(a.layoutHeader),
 				layout.Rigid(a.layoutTabs),
+				layout.Rigid(a.layoutErrorStrip),
 				layout.Flexed(1, a.layoutBody),
-				layout.Rigid(a.layoutFooter),
 			)
 		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if a.sheet == nil {
+				return layout.Dimensions{}
+			}
+			return a.layoutRiskSheet(gtx)
+		}),
 	)
+}
+
+// applyTheme resolves the persisted background choice into the
+// active palette and, on change, re-syncs the material theme's
+// base colors. "system" follows the OS appearance (navy when
+// dark); where the OS value cannot be read it falls back to
+// light, and the settings page says so (theme.system_fallback).
+func (a *App) applyTheme() {
+	setting := service.ThemeLight
+	if a.svc != nil {
+		setting = a.svc.Theme()
+	}
+	id := setting
+	if setting == service.ThemeSystem {
+		if dark, ok := platform.SystemDarkMode(); ok && dark {
+			id = service.ThemeNavy
+		} else {
+			id = service.ThemeLight
+		}
+	}
+	switch id {
+	case service.ThemeNavy:
+		pal = paletteNavy
+	case service.ThemeInk:
+		pal = paletteInk
+	default:
+		pal = paletteLight
+	}
+	if id != a.themeID {
+		a.themeID = id
+		a.th.Bg = pal.Bg
+		a.th.Fg = pal.Text
+		a.th.ContrastBg = pal.Primary
+		a.th.ContrastFg = pal.White
+	}
+}
+
+// systemUnreadable reports whether "follow system" is in
+// effect but the OS appearance cannot be read on this device
+// (the settings note's condition).
+func (a *App) systemUnreadable() bool {
+	if a.svc == nil || a.svc.Theme() != service.ThemeSystem {
+		return false
+	}
+	_, ok := platform.SystemDarkMode()
+	return !ok
 }
 
 func (a *App) handleClicks(gtx layout.Context) {
@@ -279,31 +363,71 @@ func (a *App) handleClicks(gtx layout.Context) {
 			a.tab = i
 		}
 	}
-	if a.connectBtn.Clicked(gtx) {
-		a.runAsync("connect", func(ctx context.Context) error {
-			id := a.svc.SelectedNodeID()
-			if id == "" {
-				return service.ErrNoNodeSelected
-			}
-			return a.svc.Connect(ctx, id)
-		})
-	}
 	if a.disconnectBtn.Clicked(gtx) {
+		a.setAutoPicked(false)
 		a.runAsync("disconnect", func(ctx context.Context) error { return a.svc.Disconnect(ctx) })
 	}
-	if a.autoBtn.Clicked(gtx) {
-		group := a.currentGroup()
-		a.runAsync("autoselect", func(ctx context.Context) error {
-			_, err := a.svc.AutoSelectAndConnect(ctx, group)
-			return err
-		})
+	if a.heroBtn.Clicked(gtx) {
+		a.heroPrimaryAction()
 	}
-	if a.testAllBtn.Clicked(gtx) {
+	if a.heroRetryBtn.Clicked(gtx) {
+		a.startOneTap()
+	}
+	if a.heroReasonBtn.Clicked(gtx) {
+		a.tab = tabLogs
+	}
+	if a.checkAllBtn.Clicked(gtx) {
 		group := a.currentGroup()
-		a.runAsync("test-all", func(ctx context.Context) error {
+		a.runAsync("check-all", func(ctx context.Context) error {
 			_, err := a.svc.TestGroup(ctx, group)
 			return err
 		})
+	}
+	if a.guideBtn.Clicked(gtx) {
+		a.openGuide()
+	}
+	if a.recBtn.Clicked(gtx) {
+		a.openRiskSheet(sheetGateEnable)
+	}
+	if a.riskLinkBtn.Clicked(gtx) {
+		if a.svc.VPNGateStatus().ConsentState == service.VPNGateConsentAcknowledged {
+			a.openRiskSheet(sheetInfo)
+		} else {
+			a.openRiskSheet(sheetGateConnect)
+		}
+	}
+	if a.viewAllBtn.Clicked(gtx) {
+		a.groupEnum.Value = "all"
+		a.applyGroupSelection()
+		a.nodeList.Position.First = 0
+		a.nodeList.Position.Offset = 0
+	}
+	if a.searchClearBtn.Clicked(gtx) {
+		a.searchEd.SetText("")
+	}
+	if a.detourBtn.Clicked(gtx) {
+		// "OK, move it over": the subscription was already
+		// prefilled by the detour detection; just open the
+		// subscription method row.
+		a.expandedMethod = 2
+	}
+	if a.errStripBtn.Clicked(gtx) {
+		a.tab = tabLogs
+	}
+	// Risk sheet controls.
+	if a.sheet != nil {
+		if a.sheetFullBtn.Clicked(gtx) {
+			a.sheet.full = true
+		}
+		if a.sheetCloseBtn.Clicked(gtx) {
+			a.sheet = nil
+		}
+		if a.sheetScrimBtn.Clicked(gtx) && a.sheet.mode == sheetInfo {
+			a.sheet = nil
+		}
+		if a.sheetAgreeBtn.Clicked(gtx) {
+			a.agreeRiskSheet()
+		}
 	}
 	if a.importBtn.Clicked(gtx) {
 		text := a.linksEd.Text()
@@ -370,6 +494,8 @@ func (a *App) runAsync(op string, fn func(ctx context.Context) error) {
 	}
 	a.busy = true
 	a.errKey = ""
+	a.heroErr = nil
+	a.heroFailed = false
 	a.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -397,6 +523,8 @@ func (a *App) runImport(fn func() *service.ImportReport) {
 	}
 	a.busy = true
 	a.errKey = ""
+	a.heroErr = nil
+	a.heroFailed = false
 	a.mu.Unlock()
 	go func() {
 		rep := fn()
@@ -408,6 +536,202 @@ func (a *App) runImport(fn func() *service.ImportReport) {
 		a.mu.Unlock()
 		a.invalidate()
 	}()
+}
+
+// --- v3 first-screen chain, guide, risk sheet ---------------------------
+
+// guideURL is the website's illustrated guide; the in-app
+// guide entries open it in the platform browser.
+const guideURL = "https://relavia.github.io/guide.html"
+
+// heroPrimaryAction dispatches the hero card's main button by
+// the state the hero is showing.
+func (a *App) heroPrimaryAction() {
+	kind, view := a.heroKind()
+	switch kind {
+	case heroReconnect:
+		if view != nil {
+			id := view.Record.Node.ID
+			a.setAutoPicked(false)
+			a.runAsync("connect", func(ctx context.Context) error { return a.svc.Connect(ctx, id) })
+		}
+	case heroFastest, heroNew:
+		a.startOneTap()
+	}
+}
+
+// startOneTap begins the first-screen one-tap connect. When
+// the pool's risk has not been acknowledged, the risk sheet
+// gates the chain (agreeing there continues it); otherwise the
+// chain runs at once.
+func (a *App) startOneTap() {
+	st := a.svc.VPNGateStatus()
+	if st.Attached && st.ConsentState != service.VPNGateConsentAcknowledged {
+		a.openRiskSheet(sheetGateConnect)
+		return
+	}
+	a.runHeroChain()
+}
+
+// runHeroChain runs the one-tap sequence on the existing
+// service chain — pool refresh (when consented), a real
+// availability check of every node, then auto-select +
+// connect — reporting its stage to the hero card. It mirrors
+// runAsync's bookkeeping but keeps failures on the hero
+// (with a retry) instead of the global error strip; failures
+// are still logged with their stage like every other op.
+func (a *App) runHeroChain() {
+	a.mu.Lock()
+	if a.busy {
+		a.mu.Unlock()
+		return
+	}
+	a.busy = true
+	a.errKey = ""
+	a.heroErr = nil
+	a.heroFailed = false
+	a.heroStage = stageCheck
+	if st := a.svc.VPNGateStatus(); st.Attached && st.ConsentState == service.VPNGateConsentAcknowledged {
+		a.heroStage = stageRefresh
+	}
+	a.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		err := a.heroChainSteps(ctx)
+		if err != nil {
+			a.svc.LogFailure("one-tap-connect", err)
+		}
+		a.mu.Lock()
+		a.busy = false
+		a.heroStage = stageNone
+		if err != nil {
+			a.heroErr = err
+			a.heroFailed = true
+		}
+		a.mu.Unlock()
+		a.invalidate()
+	}()
+}
+
+func (a *App) heroChainSteps(ctx context.Context) error {
+	st := a.svc.VPNGateStatus()
+	if st.Attached && st.ConsentState == service.VPNGateConsentAcknowledged {
+		if !st.Enabled {
+			_ = a.svc.EnableVPNGate()
+		}
+		if _, err := a.svc.RefreshVPNGate(ctx, false); err != nil {
+			// A failed refresh keeps the last list (marked
+			// stale by the service); the chain continues with
+			// what is on record rather than dying here.
+			a.svc.LogFailure("vpngate-refresh", err)
+		}
+	}
+	a.setHeroStage(stageCheck)
+	if _, err := a.svc.TestGroup(ctx, service.AllGroups); err != nil {
+		return err
+	}
+	a.setHeroStage(stageConnect)
+	if _, err := a.svc.AutoSelectAndConnect(ctx, service.AllGroups); err != nil {
+		return err
+	}
+	a.setAutoPicked(true)
+	return nil
+}
+
+// heroStage enumerates the one-tap chain's phases for the
+// hero card's progress line.
+type heroStage int
+
+const (
+	stageNone heroStage = iota
+	stageRefresh
+	stageCheck
+	stageConnect
+)
+
+func (a *App) setHeroStage(s heroStage) {
+	a.mu.Lock()
+	a.heroStage = s
+	a.mu.Unlock()
+	a.invalidate()
+}
+
+// heroProgress snapshots the chain state for the hero card.
+func (a *App) heroProgress() (stage heroStage, err error, failed bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.heroStage, a.heroErr, a.heroFailed
+}
+
+func (a *App) autoPicked() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.autoPickedFlag
+}
+
+func (a *App) setAutoPicked(b bool) {
+	a.mu.Lock()
+	a.autoPickedFlag = b
+	a.mu.Unlock()
+}
+
+func (a *App) helpHintText() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.helpHint
+}
+
+// openGuide opens the illustrated guide in the platform
+// browser. A failure is logged and leaves a plain-language
+// hint (with the address) under the guide entry — never a
+// silent no-op.
+func (a *App) openGuide() {
+	go func() {
+		err := platform.OpenURL(guideURL)
+		if err != nil {
+			a.svc.LogFailure("open-guide", err)
+		}
+		a.mu.Lock()
+		if err != nil {
+			a.helpHint = a.T("help.open_failed", nil)
+		} else {
+			a.helpHint = ""
+		}
+		a.mu.Unlock()
+		a.invalidate()
+	}()
+}
+
+// agreeRiskSheet performs the sheet's agree action: record
+// the risk acknowledgement, close the sheet, then continue
+// with the mode's follow-through (the one-tap chain, or
+// enable + first refresh).
+func (a *App) agreeRiskSheet() {
+	if a.sheet == nil {
+		return
+	}
+	mode := a.sheet.mode
+	if err := a.svc.AcknowledgeVPNGateRisk(); err != nil {
+		a.svc.LogFailure("vpngate-consent", err)
+		a.mu.Lock()
+		a.errKey = ErrorKey(err)
+		a.mu.Unlock()
+		a.sheet = nil
+		return
+	}
+	a.sheet = nil
+	if mode == sheetGateConnect {
+		a.runHeroChain()
+		return
+	}
+	a.runAsync("vpngate-enable", func(ctx context.Context) error {
+		if err := a.svc.EnableVPNGate(); err != nil {
+			return err
+		}
+		_, err := a.svc.RefreshVPNGate(ctx, true)
+		return err
+	})
 }
 
 // state snapshots for layout (mutex-guarded).
@@ -623,40 +947,30 @@ func (a *App) layoutHeader(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(eyeMark),
 			layout.Rigid(layout.Spacer{Width: unit.Dp(9)}.Layout),
-			layout.Rigid(a.lbl(20, font.Bold, colText, a.T("app.title", nil)).Layout),
+			layout.Rigid(a.lbl(17, font.Bold, pal.Text, a.T("app.title", nil)).Layout),
 			layout.Flexed(1, layout.Spacer{}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				text := a.statusText()
+				// Status is a single dot here; the sentence
+				// lives on the hero card (v3 first screen).
+				d := gtx.Dp(unit.Dp(10))
+				size := image.Pt(d, d)
 				switch a.statusKind() {
 				case statusRunning:
-					return a.dotPill(gtx, text, colSuccessBg, colSuccess, colSuccess)
+					paint.FillShape(gtx.Ops, pal.Success, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
 				case statusBusy:
-					return a.dotPill(gtx, text, colPrimaryLite, colPrimaryDark, colPrimary)
+					paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
 				case statusFailed:
-					return a.dotPill(gtx, text, colDangerBg, colDanger, colDanger)
+					paint.FillShape(gtx.Ops, pal.Danger, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
 				default:
-					return a.dotPill(gtx, text, colPillIdle, colSecondary, colHint)
+					paint.FillShape(gtx.Ops, pal.Hint, clip.Stroke{
+						Path:  clip.Ellipse(image.Rect(0, 0, d, d)).Path(gtx.Ops),
+						Width: float32(gtx.Dp(unit.Dp(1.6))),
+					}.Op())
 				}
+				return layout.Dimensions{Size: size}
 			}),
 		)
 	})
-}
-
-func (a *App) statusText() string {
-	st := a.svc.Status()
-	switch st.State {
-	case kernel.StateRunning:
-		return a.T("status.connected", nil)
-	case kernel.StateStarting, kernel.StateStopping:
-		return a.T("status.connecting", nil)
-	case kernel.StateFailed:
-		return a.T("status.failed", nil)
-	default:
-		if a.isBusy() {
-			return a.T("status.connecting", nil)
-		}
-		return a.T("status.disconnected", nil)
-	}
 }
 
 func (a *App) layoutTabs(gtx layout.Context) layout.Dimensions {
@@ -664,30 +978,71 @@ func (a *App) layoutTabs(gtx layout.Context) layout.Dimensions {
 	icons := []iconKind{iconGlobe, iconDownload, iconList, iconGear}
 	return layout.Inset{Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin)}.Layout(gtx,
 		func(gtx layout.Context) layout.Dimensions {
-			children := make([]layout.FlexChild, 0, len(keys)*2)
-			for i, key := range keys {
-				i, key := i, key
-				if i > 0 {
-					children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout))
-				}
-				children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					kind := btnOutline
-					if a.tab == i {
-						kind = btnPrimary
-					} else {
-						kind = btnTabOff
-					}
-					return a.bigButton(gtx, &a.tabBtns[i], icons[i], a.T(key, nil), kind)
-				}))
-			}
-			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+			gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(44))
+			return layout.Stack{}.Layout(gtx,
+				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+					size := gtx.Constraints.Min
+					fillRRect(gtx, size, 12, pal.PillIdle)
+					return layout.Dimensions{Size: size}
+				}),
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{
+						Left: unit.Dp(4), Right: unit.Dp(4),
+						Top: unit.Dp(4), Bottom: unit.Dp(4),
+					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						children := make([]layout.FlexChild, 0, len(keys))
+						for i, key := range keys {
+							i, key := i, key
+							children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								selected := a.tab == i
+								return material.Clickable(gtx, &a.tabBtns[i], func(gtx layout.Context) layout.Dimensions {
+									return layout.Stack{}.Layout(gtx,
+										layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+											size := gtx.Constraints.Min
+											if selected {
+												fillRRect(gtx, size, 9, pal.Card)
+												strokeRRect(gtx, size, 9, pal.Border)
+											}
+											return layout.Dimensions{Size: size}
+										}),
+										layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+											// Carry the tab height (44
+											// container minus its 4dp
+											// insets) on the Stacked
+											// child: Gio Stacks size
+											// from Stacked children
+											// alone, so the selected
+											// capsule fill otherwise
+											// paints at content height.
+											gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(36))
+											fg := pal.Secondary
+											w := font.Normal
+											if selected {
+												fg = pal.Text
+												w = font.Bold
+											}
+											return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														return iconLayout(gtx, icons[i], 18, fg)
+													}),
+													layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+													layout.Rigid(a.lbl(14, w, fg, a.T(key, nil)).Layout),
+												)
+											})
+										}),
+									)
+								})
+							}))
+						}
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+					})
+				}),
+			)
 		})
 }
 
 func (a *App) layoutBody(gtx layout.Context) layout.Dimensions {
-	if a.showVPNGateRisk {
-		return a.layoutVPNGateRisk(gtx)
-	}
 	switch a.tab {
 	case tabImport:
 		return a.layoutImport(gtx)
@@ -700,51 +1055,46 @@ func (a *App) layoutBody(gtx layout.Context) layout.Dimensions {
 	}
 }
 
-func (a *App) layoutFooter(gtx layout.Context) layout.Dimensions {
+// layoutErrorStrip is the global error line's v3 home: a
+// full-width danger strip under the tabs (the v2 footer row is
+// gone - the run mode it announced now lives in Settings).
+// Capped at two lines, however long the text is; tapping it
+// opens the log page the text points to.
+func (a *App) layoutErrorStrip(gtx layout.Context) layout.Dimensions {
+	errKey := a.lastErrKey()
+	if errKey == "" {
+		return layout.Dimensions{}
+	}
 	return layout.Inset{
-		Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
-		Top: unit.Dp(6), Bottom: unit.Dp(10),
+		Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(8),
 	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		rows := []layout.FlexChild{}
-		if errKey := a.lastErrKey(); errKey != "" {
-			// The error gets its own full-width row, capped at
-			// two lines: however long it is, it can never
-			// squeeze the mode line below it (the real-device
-			// defect that wrapped the footer mode text
-			// character by character down the screen edge).
-			rows = append(rows,
-				layout.Rigid(a.lblMax(12.5, font.Normal, colDanger, a.T(errKey, nil), 2).Layout),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-			)
-		}
-		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					// The label reads the persisted run-mode
-					// SETTING (svc.Mode returns Settings.Mode):
-					// on Android the session is TUN (book 8.2)
-					// and calling it "manual" would be a false
-					// statement about where traffic goes;
-					// desktop keeps the manual labels.
-					mode := a.T("mode.manual", nil)
-					switch a.svc.Mode() {
-					case kernel.ModeTUN:
-						mode = a.T("mode.tun", nil)
-					case kernel.ModeSystemProxy:
-						mode = a.T("mode.system_proxy", nil)
-					default:
-						if addr := a.svc.MixedAddr(); addr != "" {
-							mode = a.T("mode.manual_addr", map[string]string{"addr": addr})
-						}
-					}
-					return a.lbl1(11.5, font.Normal, colHint,
-						a.T("mode.label", nil)+": "+mode).Layout(gtx)
+		return material.Clickable(gtx, &a.errStripBtn, func(gtx layout.Context) layout.Dimensions {
+			return layout.Stack{}.Layout(gtx,
+				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+					size := gtx.Constraints.Min
+					fillRRect(gtx, size, dpBtnRad, pal.DangerBg)
+					return layout.Dimensions{Size: size}
 				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-				layout.Rigid(a.lbl1(11.5, font.Normal, colHint, a.T("app.footer_note", nil)).Layout),
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{
+						Left: unit.Dp(12), Right: unit.Dp(10),
+						Top: unit.Dp(9), Bottom: unit.Dp(9),
+					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return iconLayout(gtx, iconWarn, 16, pal.Danger)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+							layout.Flexed(1, a.lblMax(12.5, font.Normal, pal.Danger, a.T(errKey, nil), 2).Layout),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return iconLayout(gtx, iconChevron, 16, pal.Danger)
+							}),
+						)
+					})
+				}),
 			)
-		}))
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+		})
 	})
 }
 

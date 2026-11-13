@@ -62,16 +62,26 @@ type SubscriptionRecord struct {
 
 // Settings are the persisted client preferences.
 type Settings struct {
-	Language       string `json:"language,omitempty"`
-	Mode           string `json:"mode,omitempty"` // kernel RunMode; default "manual"
+	Language string `json:"language,omitempty"`
+	Mode     string `json:"mode,omitempty"` // kernel RunMode; default "manual"
 	// ProtocolPref is the auto-select protocol preference
 	// (2026-11-14 design ruling): "" / "auto" (by latency),
 	// "speed" (fast protocols win near-ties), "compat"
 	// (traditional protocols win near-ties). Consumed by
 	// AutoSelectAndConnect; see autoselect.go.
-	ProtocolPref string `json:"protocolPref,omitempty"`
+	ProtocolPref   string `json:"protocolPref,omitempty"`
 	SelectedNodeID string `json:"selectedNodeId,omitempty"`
 	SelectedGroup  string `json:"selectedGroup,omitempty"`
+	// Theme is the persisted background choice (v3 design):
+	// "" / "light", "navy", "ink", or "system" (follow the OS
+	// appearance, falling back to light where the OS value
+	// cannot be read). See Service.Theme for normalization.
+	Theme string `json:"theme,omitempty"`
+	// LastConnectedNodeID is the node of the most recent
+	// successful Connect, recorded so the home hero can offer
+	// "reconnect the last node" (teardown §1.4). It is only
+	// written on a successful connect, never on selection.
+	LastConnectedNodeID string `json:"lastConnectedNodeId,omitempty"`
 
 	// Update mechanism (Step 16, docs/relavia-update-v1.md).
 	// UpdateChannel is "stable" (default) or "beta".

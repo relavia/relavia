@@ -94,6 +94,11 @@ type Service struct {
 
 	mu sync.Mutex // serializes engine lifecycle operations
 
+	// lastAuto remembers the most recent auto-select outcome
+	// for the settings fallback line (see AutoSelectAndConnect).
+	// Guarded by mu.
+	lastAuto autoSelectOutcome
+
 	// VPN Gate pool source (vpngate.go). vgProber is the TCP
 	// admission prober used at refresh; nil means the plugin's
 	// default prober. It is a field (not a local) so tests can
@@ -216,12 +221,64 @@ func (s *Service) SetProtocolPref(pref string) {
 	_ = s.store.Save()
 }
 
+// Background theme choices (Settings.Theme), v3 design: four
+// user-selectable backgrounds, persisted like every other
+// preference. The zero value is the light background existing
+// users already have.
+const (
+	ThemeLight  = "light"
+	ThemeNavy   = "navy"
+	ThemeInk    = "ink"
+	ThemeSystem = "system"
+)
+
+// Theme returns the persisted background choice, normalized to
+// a known value (unknown or empty reads as light).
+func (s *Service) Theme() string {
+	switch s.store.Settings().Theme {
+	case ThemeNavy:
+		return ThemeNavy
+	case ThemeInk:
+		return ThemeInk
+	case ThemeSystem:
+		return ThemeSystem
+	default:
+		return ThemeLight
+	}
+}
+
+// SetTheme persists the background choice.
+func (s *Service) SetTheme(theme string) {
+	s.store.UpdateSettings(func(st *Settings) { st.Theme = theme })
+	_ = s.store.Save()
+}
+
+// LastConnectedNodeID returns the node of the most recent
+// successful connection ("" when never connected), for the
+// home hero's "reconnect the last node" state.
+func (s *Service) LastConnectedNodeID() string {
+	return s.store.Settings().LastConnectedNodeID
+}
+
 // RunModeOption is one selectable run mode with its live
 // availability on this platform/build.
 type RunModeOption struct {
 	Mode      kernel.RunMode
 	Available bool
+	// Reason classifies an unavailable mode for the settings
+	// copy (teardown §4.3: the reason shown must be the real
+	// one): ModeReasonPlatform when the device/platform cannot
+	// do it, ModeReasonVersion when this build does not ship
+	// it. Empty when Available.
+	Reason string
 }
+
+// Run-mode unavailability reason kinds (internal identifiers,
+// never display text).
+const (
+	ModeReasonPlatform = "platform"
+	ModeReasonVersion  = "version"
+)
 
 // RunModeOptions lists the run modes the settings page may
 // offer, with availability taken from the primary engine's live
@@ -235,10 +292,23 @@ type RunModeOption struct {
 //     mode is TUN).
 func (s *Service) RunModeOptions() []RunModeOption {
 	caps := s.Capabilities()
+	opt := func(m kernel.RunMode, ok bool, reason string) RunModeOption {
+		o := RunModeOption{Mode: m, Available: ok}
+		if !ok {
+			o.Reason = reason
+		}
+		return o
+	}
 	return []RunModeOption{
-		{Mode: kernel.ModeTUN, Available: caps.Platform.TUN},
-		{Mode: kernel.ModeManual, Available: s.MixedAddr() != ""},
-		{Mode: kernel.ModeSystemProxy, Available: caps.Platform.SystemProxy},
+		// TUN and system proxy are platform capabilities: a
+		// device without them can never offer the mode.
+		opt(kernel.ModeTUN, caps.Platform.TUN, ModeReasonPlatform),
+		// Manual mode exists only when the build's engine
+		// exposes a local listener; the Android TUN build ships
+		// none, which is a property of this version, not of the
+		// device.
+		opt(kernel.ModeManual, s.MixedAddr() != "", ModeReasonVersion),
+		opt(kernel.ModeSystemProxy, caps.Platform.SystemProxy, ModeReasonPlatform),
 	}
 }
 
@@ -367,7 +437,10 @@ func (s *Service) Connect(ctx context.Context, id string) error {
 		s.logf("connect %s failed: %v", id, err)
 		return err
 	}
-	s.store.UpdateSettings(func(st *Settings) { st.SelectedNodeID = id })
+	s.store.UpdateSettings(func(st *Settings) {
+		st.SelectedNodeID = id
+		st.LastConnectedNodeID = id
+	})
 	_ = s.store.Save()
 	s.logf("connected: %s (%s)", rec.Node.Name, id)
 	return nil
@@ -382,15 +455,38 @@ func (s *Service) AutoSelectAndConnect(ctx context.Context, group string) (*spec
 	for _, v := range views {
 		recs = append(recs, v.Record)
 	}
-	n := AutoSelectWithPreference(recs, s.ProtocolPref())
+	n, fellBack := AutoSelectExplain(recs, s.ProtocolPref())
 	if n == nil {
 		s.logf("autoselect: no tested node available in group %q", group)
 		return nil, ErrNoTestedNode
 	}
+	s.mu.Lock()
+	s.lastAuto = autoSelectOutcome{nodeName: n.Name, fellBack: fellBack, ok: true}
+	s.mu.Unlock()
 	if err := s.Connect(ctx, n.ID); err != nil {
 		return nil, err
 	}
 	return n, nil
+}
+
+// autoSelectOutcome is the remembered result of the most recent
+// AutoSelectAndConnect, for the settings page's post-hoc
+// fallback line (teardown §4.2: the fallback note appears AFTER
+// an auto-select actually ran, never as a pre-emptive warning).
+type autoSelectOutcome struct {
+	nodeName string
+	fellBack bool
+	ok       bool
+}
+
+// LastAutoSelect reports the last auto-select outcome: the
+// picked node's display name and whether the protocol
+// preference fell back to plain latency. ok is false until the
+// first auto-select of this process.
+func (s *Service) LastAutoSelect() (nodeName string, fellBack bool, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastAuto.nodeName, s.lastAuto.fellBack, s.lastAuto.ok
 }
 
 // Disconnect stops the kernel (idempotent at the adapter).

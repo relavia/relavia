@@ -168,3 +168,29 @@ bad-format
 # vocabulary) switched on to select an import.fail.* pack
 # entry; the code itself is never rendered.
 model-conversion
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+check-all
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the hero.* pack entries).
+one-tap-connect
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the help.* pack entries).
+open-guide
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+vpngate-consent
+
+# i18n key prefix fragment composed with a protocol id to form
+# proto.<id> pack keys in protoDisplayName; the fragment itself
+# is never rendered (the resolved pack value, or the raw node
+# data id, is).
+proto.

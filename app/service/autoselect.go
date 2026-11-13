@@ -66,6 +66,18 @@ func classRank(pref string, c ProtocolClass) int {
 	return 0
 }
 
+// prefClass is the protocol class a preference asks for
+// (ClassNeutral for "auto", which asks for none).
+func prefClass(pref string) ProtocolClass {
+	switch pref {
+	case ProtocolPrefSpeed:
+		return ClassFast
+	case ProtocolPrefCompat:
+		return ClassTraditional
+	}
+	return ClassNeutral
+}
+
 // latencyBucketMs is the near-tie window for the preference
 // ranking: latencies within one bucket count as "the same
 // latency" for preference purposes (the ruling's 同延迟）, so
@@ -101,6 +113,18 @@ func AutoSelect(records []NodeRecord) *specnode.Node {
 // detect that case (no candidate of the preferred class) and say
 // so in the UI.
 func AutoSelectWithPreference(records []NodeRecord, pref string) *specnode.Node {
+	n, _ := AutoSelectExplain(records, pref)
+	return n
+}
+
+// AutoSelectExplain is AutoSelectWithPreference plus the
+// fallback report the settings page owes the user (teardown
+// §4.2 pref.fallback: when a speed/compat preference could not
+// be honored because no tested candidate belongs to the
+// preferred protocol class on the winner's weak-encryption
+// tier, the UI must say the pick fell back to plain latency
+// and name the node that was picked).
+func AutoSelectExplain(records []NodeRecord, pref string) (*specnode.Node, bool) {
 	type cand struct {
 		node    *specnode.Node
 		weak    bool
@@ -121,7 +145,7 @@ func AutoSelectWithPreference(records []NodeRecord, pref string) *specnode.Node 
 		})
 	}
 	if len(cands) == 0 {
-		return nil
+		return nil, false
 	}
 	preference := pref == ProtocolPrefSpeed || pref == ProtocolPrefCompat
 	sort.SliceStable(cands, func(i, j int) bool {
@@ -141,5 +165,16 @@ func AutoSelectWithPreference(records []NodeRecord, pref string) *specnode.Node 
 		}
 		return cands[i].latency < cands[j].latency
 	})
-	return cands[0].node
+	winner := cands[0]
+	fellBack := false
+	if prefClass(pref) != ClassNeutral && winner.class != prefClass(pref) {
+		fellBack = true
+		for _, c := range cands {
+			if c.class == prefClass(pref) && c.weak == winner.weak {
+				fellBack = false
+				break
+			}
+		}
+	}
+	return winner.node, fellBack
 }

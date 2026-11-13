@@ -41,10 +41,10 @@ import (
 var namesJSON []byte
 
 var (
-	countryByName map[string]string   // country name (EN/CN/local) -> ISO
-	nameKeys      []string            // countryByName keys, longest first
-	protocolShort map[string]string   // protocol -> tile text
-	knownISO      map[string]bool     // ISO codes we may resolve to
+	countryByName map[string]string // country name (EN/CN/local) -> ISO
+	nameKeys      []string          // countryByName keys, longest first
+	protocolShort map[string]string // protocol -> tile text
+	knownISO      map[string]bool   // ISO codes we may resolve to
 )
 
 func init() {
@@ -158,16 +158,25 @@ func countryNameISO(s string) (string, bool) {
 // resolved country, an ISO code tile for a known country
 // without a drawn recipe, or the protocol tile when no country
 // is known.
+// flagIconLayout draws the standard 40x28 row tile (the v3
+// two-line row's leading icon; its width plus the 12dp gap is
+// what the 68dp divider indent aligns to).
 func (a *App) flagIconLayout(gtx layout.Context, view service.NodeView) layout.Dimensions {
-	w := gtx.Dp(unit.Dp(46))
-	h := gtx.Dp(unit.Dp(34))
+	return a.flagIconSized(gtx, view, 40, 28)
+}
+
+// flagIconSized is flagIconLayout at an explicit tile size
+// (the "picked for you" rows use 36x25).
+func (a *App) flagIconSized(gtx layout.Context, view service.NodeView, wDp, hDp int) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(float32(wDp)))
+	h := gtx.Dp(unit.Dp(float32(hDp)))
 	size := image.Pt(w, h)
 	iso, ok := nodeCountryISO(view)
 	if !ok {
 		// Protocol tile.
 		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				fillRRect(gtx, size, 6, colPrimaryLite)
+				fillRRect(gtx, size, 6, pal.PrimaryLite)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -178,7 +187,7 @@ func (a *App) flagIconLayout(gtx layout.Context, view service.NodeView) layout.D
 						short = short[:6]
 					}
 				}
-				return a.lbl(10.5, font.Bold, colPrimaryDark, short).Layout(gtx)
+				return a.lbl(10.5, font.Bold, pal.PrimaryText, short).Layout(gtx)
 			}),
 		)
 	}
@@ -186,11 +195,11 @@ func (a *App) flagIconLayout(gtx layout.Context, view service.NodeView) layout.D
 		// Known country, no drawn recipe: neutral code tile.
 		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				fillRRect(gtx, size, 6, colPrimaryLite)
+				fillRRect(gtx, size, 6, pal.PrimaryLite)
 				return layout.Dimensions{Size: size}
 			}),
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				return a.lbl(13, font.Bold, colPrimaryDark, iso).Layout(gtx)
+				return a.lbl(13, font.Bold, pal.PrimaryText, iso).Layout(gtx)
 			}),
 		)
 	}
@@ -204,7 +213,7 @@ func (a *App) flagIconLayout(gtx layout.Context, view service.NodeView) layout.D
 	paintFlag(p, iso)
 	// Hairline border over the flag so light flags (JP, PL)
 	// keep a defined edge on the page background.
-	strokeRRect(gtx, size, 6, colBorder)
+	strokeRRect(gtx, size, 6, pal.Border)
 	return layout.Dimensions{Size: size}
 }
 
