@@ -100,13 +100,16 @@ func (s *appSession) ensureBuiltLocked() error {
 	// adapter, whose listener would route nothing here. The
 	// in-process adapter survives as the engine's probe for
 	// handshake tests and spec validation. The OpenVPN slot
-	// stays honestly unavailable, and the VPN Gate pool
-	// source attaches as on every platform.
+	// is the OpenVPN 3 bridge engine: it serves pool nodes
+	// when the shell registered the native side and degrades
+	// to the slot's previous honest-unavailable behaviour
+	// when it did not (docs/openvpn3安卓接线.md). The VPN
+	// Gate pool source attaches as on every platform.
 	probe := service.NewSingBoxEngine(logSink)
 	tunEng := newTUNEngine(probe)
 	engine := service.NewDispatchEngine(
 		tunEng,
-		service.NewAndroidOpenVPNEngine(),
+		newOvpn3Engine(logSink),
 	)
 	svc = service.New(store, engine)
 	service.AttachVPNGateDefault(svc, storePath)

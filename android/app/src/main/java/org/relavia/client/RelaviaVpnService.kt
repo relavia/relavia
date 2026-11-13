@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import org.relavia.libboxbind.Libboxbind
 import org.relavia.libboxbind.TunParams
 
 /**
@@ -36,7 +37,7 @@ import org.relavia.libboxbind.TunParams
  *
  * No root and no non-public APIs are used anywhere here.
  */
-class RelaviaVpnService : VpnService() {
+class RelaviaVpnService : VpnService(), Ovpn3TunHost {
 
     private val tunLock = Any()
     private var tun: ParcelFileDescriptor? = null
@@ -56,6 +57,7 @@ class RelaviaVpnService : VpnService() {
                 // local teardown if Go never answers.
                 Thread {
                     GoBridge.sessionStop()
+                    Ovpn3SessionController.requestStop()
                     stopTunnelLocal()
                 }.start()
                 START_NOT_STICKY
@@ -70,11 +72,34 @@ class RelaviaVpnService : VpnService() {
                 showForeground(connected = false)
                 START_STICKY
             }
+            ACTION_OVPN3_START -> {
+                // OpenVPN 3 mode (docs/openvpn3安卓接线.md):
+                // the profile is already waiting in
+                // Ovpn3SessionController (Go handed it to
+                // Ovpn3BridgeImpl); run the core session on a
+                // worker thread — its TunBuilder callbacks come
+                // back into this service as Ovpn3TunHost.
+                showForeground(connected = false)
+                startOvpn3Session()
+                START_STICKY
+            }
+            ACTION_OVPN3_STOP -> {
+                // Go gave up on (or ended) the OpenVPN 3
+                // session: stop the core if it is up; if the
+                // service was still in bring-up, stand down.
+                Ovpn3SessionController.requestStop()
+                if (Ovpn3SessionController.client == null) {
+                    Ovpn3SessionController.pending = null
+                    stopTunnelLocal()
+                }
+                START_NOT_STICKY
+            }
             else -> START_NOT_STICKY
         }
     }
 
     override fun onRevoke() {
+        Ovpn3SessionController.requestStop()
         // The system or the user revoked the VPN (another VPN
         // app took over, consent withdrawn in settings,
         // always-on conflict). The interface is already dead:
@@ -86,9 +111,121 @@ class RelaviaVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        Ovpn3SessionController.requestStop()
         stopTunnelLocal()
         ShellBridgeImpl.onServiceGone(this)
         super.onDestroy()
+    }
+
+    // --- OpenVPN 3 hosting (Ovpn3TunHost) ----------------------
+
+    /**
+     * Run the pending OpenVPN 3 session on a worker thread.
+     * The core blocks in connect() until disconnect; the
+     * finally unwinds the service whatever the outcome — the
+     * Go engine has already been told through the event
+     * channel by then (the client forwards every event).
+     */
+    private fun startOvpn3Session() {
+        Thread {
+            val pending = Ovpn3SessionController.pending
+            Ovpn3SessionController.pending = null
+            if (pending == null) {
+                // A start intent with no profile (service
+                // restarted by the system): nothing to run.
+                stopTunnelLocal()
+                return@Thread
+            }
+            val client = Ovpn3Client(this)
+            Ovpn3SessionController.client = client
+            val stats = Thread {
+                // Traffic counters while connected: the core
+                // totals, forwarded verbatim (bytesOut = up,
+                // bytesIn = down from the client's viewpoint).
+                while (Ovpn3SessionController.client === client) {
+                    try {
+                        Thread.sleep(2_000)
+                        if (client.isConnected()) {
+                            val ts = client.transport_stats()
+                            Libboxbind.notifyOvpn3Traffic(ts.bytesOut, ts.bytesIn)
+                        }
+                    } catch (e: InterruptedException) {
+                        break
+                    } catch (e: Exception) {
+                        // A torn-down client answers with a
+                        // dead object; the loop condition ends
+                        // the polling on the next pass.
+                    }
+                }
+            }
+            stats.isDaemon = true
+            stats.start()
+            try {
+                client.runSession(pending.profile, pending.username, pending.password)
+            } catch (e: Exception) {
+                Libboxbind.notifyOvpn3Event("CONNECTION_FAILED", e.message ?: "core error", true)
+            } finally {
+                Ovpn3SessionController.client = null
+                stopTunnelLocal()
+            }
+        }.start()
+    }
+
+    override fun establishOvpn3Tun(spec: Ovpn3Client.TunSpec): Int {
+        synchronized(tunLock) {
+            closeTunLocked()
+            val builder = Builder()
+                .setSession(spec.sessionName)
+                .setBlocking(false)
+            for (addr in spec.addresses) {
+                addAddressIfPresent(builder, addr)
+            }
+            for (server in spec.dnsServers) {
+                try {
+                    builder.addDnsServer(server)
+                } catch (e: IllegalArgumentException) {
+                    // A server-pushed DNS address this device
+                    // cannot parse must not kill the tunnel.
+                }
+            }
+            var routed = false
+            for (route in spec.routes) {
+                addRouteIfPresent(builder, route)
+                routed = true
+            }
+            if (spec.rerouteIpv4) {
+                builder.addRoute("0.0.0.0", 0)
+                routed = true
+            }
+            if (spec.rerouteIpv6) {
+                builder.addRoute("::", 0)
+                routed = true
+            }
+            if (!routed) {
+                builder.addRoute("0.0.0.0", 0)
+            }
+            if (spec.mtu > 0) {
+                builder.setMtu(spec.mtu)
+            }
+            val pfd = builder.establish() ?: return -1
+            tun = pfd
+            showForeground(connected = true)
+            return pfd.fd
+        }
+    }
+
+    override fun closeOvpn3Tun() {
+        closeTunFromBridge()
+    }
+
+    override fun protectOvpn3Socket(fd: Int): Boolean {
+        return protect(fd)
+    }
+
+    override fun onOvpn3Event(name: String) {
+        if (name == "CONNECTED") {
+            showForeground(connected = true)
+        }
     }
 
     // --- bridge-facing operations (called via ShellBridgeImpl) ----
@@ -233,6 +370,8 @@ class RelaviaVpnService : VpnService() {
     companion object {
         const val ACTION_START = "org.relavia.client.action.START"
         const val ACTION_STOP = "org.relavia.client.action.STOP"
+        const val ACTION_OVPN3_START = "org.relavia.client.action.OVPN3_START"
+        const val ACTION_OVPN3_STOP = "org.relavia.client.action.OVPN3_STOP"
 
         const val CHANNEL_ID = "relavia-connection"
         private const val NOTIFICATION_ID = 1

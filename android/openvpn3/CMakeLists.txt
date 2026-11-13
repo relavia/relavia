@@ -1,0 +1,97 @@
+# libovpn3android.so — the OpenVPN 3 core as one Android JNI
+# library for Relavia (docs/openvpn3许可证审查.md: MPL-2.0 side;
+# docs/openvpn3构建尖峰.md: build recipe and evidence).
+#
+# This file is Relavia's own build glue (GPL-3.0-or-later, like
+# the rest of the client). It consumes the pinned upstream
+# openvpn3 tree (OPENVPN3_SRC) and the arm64-android vcpkg
+# install tree (VCPKG_INSTALLED_DIR) and produces the single
+# shared library the APK ships in jniLibs/<abi>/:
+#
+#   ovpncli.cpp          upstream client implementation
+#   ovpncli_wrap.cpp     SWIG-generated JNI wrapper (build-time)
+#   javacli/android/cpu.cpp  upstream JNI helper
+#
+# Red lines from the license review: no LZO (GPL-2.0-only), only
+# library targets of lz4/xxhash (their GPLv2 CLI tools are not
+# built or shipped), OpenSSL 3 (Apache-2.0) as the TLS backend.
+
+cmake_minimum_required(VERSION 3.22)
+project(ovpn3android CXX)
+
+if(NOT DEFINED OPENVPN3_SRC)
+  message(FATAL_ERROR "OPENVPN3_SRC (pinned openvpn3 checkout) is required")
+endif()
+if(NOT DEFINED VCPKG_INSTALLED_DIR)
+  message(FATAL_ERROR "VCPKG_INSTALLED_DIR (arm64-android install tree) is required")
+endif()
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+list(APPEND CMAKE_PREFIX_PATH ${VCPKG_INSTALLED_DIR})
+find_package(OpenSSL REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(jsoncpp CONFIG REQUIRED)
+# lz4 / xxHash ship CMake configs under vcpkg but not in
+# every distro package (Ubuntu: pkg-config only). QUIET +
+# the plain library names in the link line below resolve in
+# both worlds (vcpkg's toolchain puts its lib dir on the
+# linker path; distro packages sit in the default path).
+find_package(lz4 CONFIG QUIET)
+find_package(xxHash CONFIG QUIET)
+find_path(ASIO_INCLUDE_DIR NAMES asio.hpp HINTS ${VCPKG_INSTALLED_DIR}/include REQUIRED)
+
+add_library(ovpn3android SHARED
+  ${OPENVPN3_SRC}/client/ovpncli.cpp
+  ${CMAKE_CURRENT_BINARY_DIR}/ovpncli_wrap.cpp
+  ${OPENVPN3_SRC}/javacli/android/cpu.cpp
+)
+
+target_include_directories(ovpn3android PRIVATE
+  ${OPENVPN3_SRC}
+  ${OPENVPN3_SRC}/client
+  ${ASIO_INCLUDE_DIR}
+)
+
+target_compile_definitions(ovpn3android PRIVATE
+  OPENVPN_PLATFORM_ANDROID
+  ASIO_STANDALONE
+  ASIO_HAS_STD_CHRONO
+  ASIO_NO_DEPRECATED
+  # USE_ASIO / HAVE_JSONCPP / HAVE_LZ4 mirror the define set
+  # upstream's own client library build uses (verified
+  # against its CMake output during the build spike); the
+  # openvpn_io alias the core headers expect comes from
+  # USE_ASIO.
+  USE_ASIO
+  HAVE_JSONCPP
+  HAVE_LZ4
+  USE_OPENSSL
+  OPENVPN_USE_SITNL=0
+  # javacli/android/cpu.cpp requires a package token to name
+  # its (here unused) CPUUsage JNI export; the token is the
+  # application package, mangled.
+  OPENVPN_PACKAGE_ID=org_relavia_client
+)
+
+# On Android the NDK sysroot provides jni.h. For host-side
+# evidence builds (the spike doc), fall back to the JDK.
+if(NOT ANDROID)
+  find_package(JNI REQUIRED)
+  target_include_directories(ovpn3android PRIVATE ${JNI_INCLUDE_DIRS})
+endif()
+
+set(OVPN3_LINK_LIBS OpenSSL::SSL OpenSSL::Crypto fmt::fmt JsonCpp::JsonCpp)
+if(TARGET lz4::lz4)
+  list(APPEND OVPN3_LINK_LIBS lz4::lz4)
+else()
+  list(APPEND OVPN3_LINK_LIBS lz4)
+endif()
+if(TARGET xxHash::xxhash)
+  list(APPEND OVPN3_LINK_LIBS xxHash::xxhash)
+else()
+  list(APPEND OVPN3_LINK_LIBS xxhash)
+endif()
+target_link_libraries(ovpn3android PRIVATE ${OVPN3_LINK_LIBS})
