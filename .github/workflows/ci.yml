@@ -121,8 +121,19 @@ jobs:
           unzip -l "$APK"
           unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a|x86_64)/libgojni\.so'
           AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
-          "$AAPT2" dump permissions "$APK"
-          test "$("$AAPT2" dump permissions "$APK" | grep -c 'uses-permission:')" -eq 5
+          PERMS="$("$AAPT2" dump permissions "$APK")"
+          echo "$PERMS"
+          # Exactly the five android.permission.* uses-permissions the
+          # shell declares — no more, no fewer, by name. A raw
+          # 'uses-permission:' line count is wrong here: androidx.core
+          # defines and self-uses the signature-level app permission
+          # org.relavia.client.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION,
+          # which aapt2 also prints as a uses-permission line (6 lines
+          # total) and false-failed this step in CI run 43378835029.
+          test "$(echo "$PERMS" | grep -c "uses-permission: name='android.permission\.")" -eq 5
+          for p in INTERNET ACCESS_NETWORK_STATE FOREGROUND_SERVICE FOREGROUND_SERVICE_SPECIAL_USE POST_NOTIFICATIONS; do
+            echo "$PERMS" | grep -q "uses-permission: name='android.permission.$p'" || { echo "verify: missing permission $p" >&2; exit 1; }
+          done
       - name: Upload merged APK artifact
         uses: actions/upload-artifact@v4
         with:
