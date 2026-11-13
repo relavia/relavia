@@ -41,6 +41,11 @@ type NodeRecord struct {
 	// a node whose reachability probe failed keeps "none".
 	// Empty for user-imported nodes (no admission concept).
 	Admission string `json:"admission,omitempty"`
+	// Favorite is the user's star on the node row (2026-11-14
+	// design ruling): a plain bookmark flag, persisted with the
+	// record so it survives restarts. It carries no ranking or
+	// selection semantics.
+	Favorite bool `json:"favorite,omitempty"`
 }
 
 // SubscriptionRecord is the stored registration of one imported
@@ -59,6 +64,12 @@ type SubscriptionRecord struct {
 type Settings struct {
 	Language       string `json:"language,omitempty"`
 	Mode           string `json:"mode,omitempty"` // kernel RunMode; default "manual"
+	// ProtocolPref is the auto-select protocol preference
+	// (2026-11-14 design ruling): "" / "auto" (by latency),
+	// "speed" (fast protocols win near-ties), "compat"
+	// (traditional protocols win near-ties). Consumed by
+	// AutoSelectAndConnect; see autoselect.go.
+	ProtocolPref string `json:"protocolPref,omitempty"`
 	SelectedNodeID string `json:"selectedNodeId,omitempty"`
 	SelectedGroup  string `json:"selectedGroup,omitempty"`
 
@@ -441,6 +452,20 @@ func (s *Store) SetAdmission(id string, level string) bool {
 	for i := range s.doc.Nodes {
 		if s.doc.Nodes[i].Node.ID == id {
 			s.doc.Nodes[i].Admission = level
+			return true
+		}
+	}
+	return false
+}
+
+// SetFavorite records the user's star on a node (persisted by
+// the caller's Save).
+func (s *Store) SetFavorite(id string, fav bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.doc.Nodes {
+		if s.doc.Nodes[i].Node.ID == id {
+			s.doc.Nodes[i].Favorite = fav
 			return true
 		}
 	}

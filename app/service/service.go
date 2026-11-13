@@ -40,6 +40,8 @@ type NodeView struct {
 	// ("tcp-connect" / "handshake-verified" / "none"); empty
 	// for user-imported nodes.
 	Admission string
+	// Favorite mirrors NodeRecord.Favorite (the user's star).
+	Favorite bool
 }
 
 // LogBuffer is a bounded in-memory ring of diagnostic log lines
@@ -148,6 +150,7 @@ func (s *Service) Nodes(group string) []NodeView {
 			Insecure:  InsecureSkipVerify(rec.Node),
 			VPNGate:   IsVPNGateNode(rec.Node),
 			Admission: rec.Admission,
+			Favorite:  rec.Favorite,
 		})
 	}
 	return out
@@ -168,7 +171,75 @@ func (s *Service) NodeByID(id string) (NodeView, bool) {
 		Insecure:  InsecureSkipVerify(rec.Node),
 		VPNGate:   IsVPNGateNode(rec.Node),
 		Admission: rec.Admission,
+		Favorite:  rec.Favorite,
 	}, true
+}
+
+// SetNodeFavorite stars or unstars a node and persists the
+// change immediately (the star must survive a restart).
+func (s *Service) SetNodeFavorite(id string, fav bool) {
+	if s.store.SetFavorite(id, fav) {
+		_ = s.store.Save()
+	}
+}
+
+// LogFailure records a user-visible failure in the local log
+// with its stage and real reason. It exists for failures that
+// originate OUTSIDE the service (file reads in the UI,
+// subscription fetches, platform refusals surfaced by shells):
+// the error-chain rule is that any failure the UI shows must
+// also be findable on the log page, so the UI calls this for
+// every error it displays.
+func (s *Service) LogFailure(stage string, err error) {
+	if err == nil {
+		return
+	}
+	s.logf("%s failed: %v", stage, err)
+}
+
+// ProtocolPref returns the persisted auto-select protocol
+// preference, normalized to a known value.
+func (s *Service) ProtocolPref() string {
+	switch s.store.Settings().ProtocolPref {
+	case ProtocolPrefSpeed:
+		return ProtocolPrefSpeed
+	case ProtocolPrefCompat:
+		return ProtocolPrefCompat
+	default:
+		return ProtocolPrefAuto
+	}
+}
+
+// SetProtocolPref persists the auto-select protocol preference.
+func (s *Service) SetProtocolPref(pref string) {
+	s.store.UpdateSettings(func(st *Settings) { st.ProtocolPref = pref })
+	_ = s.store.Save()
+}
+
+// RunModeOption is one selectable run mode with its live
+// availability on this platform/build.
+type RunModeOption struct {
+	Mode      kernel.RunMode
+	Available bool
+}
+
+// RunModeOptions lists the run modes the settings page may
+// offer, with availability taken from the primary engine's live
+// capabilities — a mode the platform cannot honor is listed as
+// unavailable (with the reason shown by the UI), never hidden
+// and never offered as a dead switch:
+//   - TUN: the platform layer reports a TUN device;
+//   - system proxy: the platform layer can set the OS proxy;
+//   - manual (local listener): a local mixed listener address
+//     exists (the Android TUN engine exposes none — its only
+//     mode is TUN).
+func (s *Service) RunModeOptions() []RunModeOption {
+	caps := s.Capabilities()
+	return []RunModeOption{
+		{Mode: kernel.ModeTUN, Available: caps.Platform.TUN},
+		{Mode: kernel.ModeManual, Available: s.MixedAddr() != ""},
+		{Mode: kernel.ModeSystemProxy, Available: caps.Platform.SystemProxy},
+	}
 }
 
 // DeleteNode removes a node (and persists).
@@ -311,8 +382,9 @@ func (s *Service) AutoSelectAndConnect(ctx context.Context, group string) (*spec
 	for _, v := range views {
 		recs = append(recs, v.Record)
 	}
-	n := AutoSelect(recs)
+	n := AutoSelectWithPreference(recs, s.ProtocolPref())
 	if n == nil {
+		s.logf("autoselect: no tested node available in group %q", group)
 		return nil, ErrNoTestedNode
 	}
 	if err := s.Connect(ctx, n.ID); err != nil {

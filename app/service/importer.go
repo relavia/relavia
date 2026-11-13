@@ -101,7 +101,7 @@ func (s *Service) ingestLink(res parsers.LinkResult) *ImportReport {
 func (s *Service) ImportText(text string) *ImportReport {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
-		return &ImportReport{Failed: []ImportFailure{{Code: parsers.ErrEmptyInput, Detail: "empty input"}}}
+		return s.finishImport(&ImportReport{Failed: []ImportFailure{{Code: parsers.ErrEmptyInput, Detail: "empty input"}}})
 	}
 	// A single line containing a scheme is a single link;
 	// everything else goes through the subscription dispatcher,
@@ -146,14 +146,20 @@ func (s *Service) ImportSubscriptionURL(ctx context.Context, rawURL, name string
 	req.Header.Set("User-Agent", "Relavia/0.1 (+https://github.com/relavia/relavia)")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		// The UI shows this failure; the error-chain rule says
+		// it must be findable in the local log too.
+		s.logf("subscription fetch failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("service: subscription fetch: HTTP %d", resp.StatusCode)
+		err := fmt.Errorf("service: subscription fetch: HTTP %d", resp.StatusCode)
+		s.logf("subscription fetch failed: %v", err)
+		return nil, err
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
+		s.logf("subscription fetch failed: %v", err)
 		return nil, err
 	}
 	res := parsers.ParseSubscription(body, parsers.SubscriptionOptions{URL: rawURL, Name: name})

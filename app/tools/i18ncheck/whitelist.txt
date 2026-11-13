@@ -49,3 +49,122 @@ RELAVIA_STORE
 # Android build environment variable enabling the fake VPN
 # binder in logic-validation builds (build/OS constant).
 RELAVIA_FAKE_VPN
+
+# Panic prefix for a corrupt embedded data file (developer
+# diagnostic, never rendered as UI copy).
+ui: names.json: 
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+autoselect
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+test-all
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+import-url
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+import-file
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+test-node
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+vpngate-enable
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+vpngate-refresh
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+vpngate-revoke
+
+# Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the user-facing
+# text for the same failure comes from the err.* pack entries).
+vpngate-confirm
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+empty-input
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+input-too-large
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+unknown-scheme
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+unsupported-protocol
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-base64
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-json
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-uri
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+missing-field
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-port
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-uuid
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-key-format
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+unsupported-value
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+bad-format
+
+# Stable parser error-code identifier (core/parsers
+# vocabulary) switched on to select an import.fail.* pack
+# entry; the code itself is never rendered.
+model-conversion
