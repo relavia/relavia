@@ -61,8 +61,19 @@ for ABI in "${ABIS[@]}"; do
     -I"$SRC" -I"$SRC/client" "$SRC/client/ovpncli.i"
 
   echo "== CMake build ($ABI) =="
+  # The NDK toolchain alone roots every find_* inside the NDK
+  # sysroot (CMAKE_FIND_ROOT_PATH_MODE_* = ONLY), so the vcpkg
+  # installed tree is invisible to FindOpenSSL / config packages
+  # even via CMAKE_PREFIX_PATH — configure died at
+  # find_package(OpenSSL) in CI (run 43499776194). The vcpkg
+  # toolchain chainloading the NDK one is the documented fix:
+  # vcpkg.cmake adds its installed dir to CMAKE_FIND_ROOT_PATH,
+  # which re-roots those searches into the vcpkg tree.
+  ls "$INSTALLED/lib" | head -20
   cmake -S "$REPO_ROOT/android/openvpn3" -B "$WORK/build-$ABI" \
-    -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+    -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+    -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
     -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-$NDK_MIN_API \
     -DCMAKE_BUILD_TYPE=Release \
     -DOPENVPN3_SRC="$SRC" -DVCPKG_INSTALLED_DIR="$INSTALLED"
