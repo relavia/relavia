@@ -37,14 +37,19 @@ type ProbeResult struct {
 // Ruling (recorded as a deviation in the Step 14 doc): book 7.3
 // asks for real-handshake admission. A real OpenVPN handshake
 // requires the OpenVPN independent-process engine (Step 2
-// license-audit ruling), which has not landed yet — the Step 7
-// sing-box adapter explicitly reports OpenVPN as unsupported.
-// Until that engine lands, admission to the *displayed* list is
+// license-audit ruling), which at Step 14 had not landed yet —
+// the Step 7 sing-box adapter explicitly reports OpenVPN as
+// unsupported. Admission to the *displayed* list was therefore
 // config validity (Step 8 parse) plus this reachability probe,
-// always labelled with its level; a real handshake through the
-// kernel adapter remains the admission test for *connecting*
-// once the OpenVPN engine exists. The probe never claims to be
+// always labelled with its level. The probe never claims to be
 // a handshake.
+//
+// Update (OpenVPN process adapter, docs/openvpn进程适配.md): the
+// engine has landed. HandshakeProber (probe_handshake.go) now
+// provides the handshake-verified admission level of book 7.3,
+// with this TCP probe demoted to a pre-filter. The deviation is
+// closed on the code side; real-handshake admission against live
+// VPN Gate servers remains a public-network acceptance item.
 type Prober struct {
 	Timeout time.Duration // per node; default 5s
 	Dial    func(ctx context.Context, network, address string) (net.Conn, error)

@@ -225,3 +225,22 @@ jobs:
         run: pip install "jsonschema>=4"
       - name: Validate schema and examples
         run: python3 spec/tests/validate.py
+
+  openvpn-rig:
+    name: openvpn (process adapter real-handshake rig)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Install OpenVPN (official distro package)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openvpn
+          openvpn --version
+      - name: Handshake rig (real server, TCP loopback, null device)
+        working-directory: core
+        env:
+          RELAVIA_OPENVPN_RIG: "1"
+        run: go test -run Rig -v -timeout 10m ./openvpn/

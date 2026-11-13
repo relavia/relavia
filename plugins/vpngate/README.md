@@ -15,9 +15,15 @@ VPN Gate 学术实验项目的官方服务器列表 CSV——其官方明确提�
   上逐行元数据（国家、运营者、其自报 Ping/速度、逐节点 LogType）、
   国家/地区分组与志愿者标注。L2TP / SSTP / SoftEther 原生协议不产
   出节点（理由与处置见 docs/step14-VPNGate来源插件.md）。
-- **测活**：插件自有 TCP 可达性探针，结果带级别标注
-  （`tcp-connect`，不是协议握手）；UDP 节点报未探（未知，非宕机）。
-  真实 OpenVPN 握手待独立进程引擎落地后接入（见 Step 14 文档出入项）。
+- **测活（两级，级别强制标注）**：① 插件自有 TCP 可达性探针
+  （`tcp-connect`，不是协议握手；UDP 节点报未探，未知非宕机）；
+  ② 真实握手准入（`handshake-verified`）：OpenVPN 独立进程引擎
+  落地后接入（`probe_handshake.go` 的 `HandshakeProber`）——经
+  内核适配器 `TestHandshakeNode` 完成真实 OpenVPN 握手，TCP 探
+  针降为预筛。握手由项目自有内核适配器执行，插件只经接口注入
+  与编排；源数据永远只作数据、绝不作为代码执行（适配器侧亦会
+  剥离配置中的脚本钩子）。公网实握属公网验收项，见
+  docs/openvpn进程适配.md。
 - **风险门（硬性）**：未确认 7.3 强制风险提示不得启用——`Consent`
   状态机守住 `Enable()`/`Refresh()`；确认绑定风险文案版本，文案更
   新即失效须重确认；停用即撤销确认并删除拉取缓存。文案三语词条在

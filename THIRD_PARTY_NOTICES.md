@@ -13,7 +13,7 @@
 |---|---|---|---|---|---|
 | 1 | sing-box | SagerNet/sing-box | GPL-3.0-or-later ＋ 名称/关联附加条款 | 一期主挂接内核 | **已集成（Step 7，v1.14.4，进程内库形态，构建标签 with_quic/with_utls/with_wireguard/with_gvisor；授权声明原文存 docs/licenses/sing-box-授权声明.txt）** |
 | 2 | SoftEther VPN | SoftEtherVPN/SoftEtherVPN | Apache-2.0 | 第二梯队（VPN 类编排） | 已审计，未集成 |
-| 3 | OpenVPN（2.x） | OpenVPN/openvpn | GPL-2.0-only ＋ OpenSSL / Apache2 / LZO 链接例外 | 仅独立进程随附分发 | 已审计，未集成 |
+| 3 | OpenVPN（2.x） | OpenVPN/openvpn | GPL-2.0-only ＋ OpenSSL / Apache2 / LZO 链接例外 | 仅独立进程随附分发 | **进程适配器已集成（core/openvpn，独立进程驱动 + management 接口；二进制本身不入仓、不链接）**；随包捆绑的版本与校验和在打包时按下方 OpenVPN 捆绑登记表回填 |
 | 4 | wireguard-go | WireGuard/wireguard-go | MIT | WireGuard 隧道实现 | 已集成（Step 7 经 sing-box 传递，实际模块为 SagerNet 分支 github.com/sagernet/wireguard-go） |
 | 5 | Wintun | WireGuard/wintun | 源码 GPL-2.0；官方预编译 DLL 为专有 Prebuilt Binaries License；Go 绑定 MIT | 仅官方预编译签名 DLL | 已审计，未集成 |
 | 6 | quic-go | quic-go/quic-go | MIT（Logo/品牌资产除外） | QUIC 依赖（经 sing-box 传递） | 已集成（Step 7 经 sing-box 传递，实际模块为 SagerNet 分支 github.com/sagernet/quic-go） |
@@ -33,3 +33,18 @@
 7. **uTLS**：源码与二进制分发均保留版权声明、许可条款与免责声明；不得以版权方/贡献者名义为衍生产品背书。
 8. **Xray-core**：若启用，其源文件保持 MPL-2.0（义务清单第 6 条）：修改其文件后分发须以 MPL-2.0 提供该等文件源码并告知获取方式；不移除或篡改许可声明；执行体分发须告知接收者如何获取 MPL 部分源码；仓库内标清 MPL/GPL 文件边界；MPL 不授予商标权。
 9. **filippo.io/age / filippo.io/hpke**：BSD-3-Clause 义务：源码与二进制分发均保留版权声明、许可条款与免责声明；不得以版权方/贡献者名义为衍生产品背书。随 libbox AAR 分发时其声明随 sing-box 的 GPL 对应源码义务一并提供（本仓库公开即满足）。构建工具 sagernet/gomobile（BSD-3-Clause）仅为构建期工具，不分发、不构成产品依赖，故不入逐项义务。
+
+## OpenVPN / Wintun 捆绑登记（Windows 发行包，打包时逐项回填）
+
+进程适配器（core/openvpn）只驱动官方 OpenVPN 二进制，仓库内不含该二进制。Windows 发行包捆绑时必须逐项登记并随附下列材料（Step 2 审计义务清单第 3、4 条）；任一栏为空即不得出包：
+
+| 字段 | OpenVPN | Wintun |
+|---|---|---|
+| 版本 | 〔打包时回填，须 ≥ 2.5.0 且经适配器版本校验〕 | 〔打包时回填〕 |
+| 官方来源 URL | https://swupdate.openvpn.org/community/releases/（官方社区版安装包） | https://www.wintun.net/（官方分发包） |
+| 官方签名校验 | 〔安装包 GPG/签名校验结果〕 | DLL 为官方 Authenticode 签名，未修改（签名者 WireGuard LLC） |
+| SHA-256 | 〔openvpn.exe 校验和回填〕 | 〔wintun.dll 校验和回填〕 |
+| 随附许可材料 | OpenVPN 的 COPYING 与 GPLv2 全文；对应源码获取途径说明 | Prebuilt Binaries License 全文；**非开源组件**明示 |
+| 包内标注 | 不暗示 OpenVPN Inc 背书；因含 Wintun 专有预编译 DLL 与 OpenVPN 二进制，**发行包不得宣称「100% 开源」** | 同左 |
+
+macOS/Linux 发行形态：不捆绑，依赖系统包管理器安装的 OpenVPN（适配器定位逻辑含 PATH 兜底），故无本登记义务；官网下载页须注明该依赖。
