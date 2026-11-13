@@ -25,7 +25,7 @@ W-1 系统代理实际生效、W-2 托盘行为、W-3 CJK 字体渲染、W-4 端
 客户端MVP.md §5、docs/阶段1-汇总验收.md §4；归属：真机清单。
 
 ### KI-03 VPN Gate 节点池接线（代码侧完成，残余为实证项）
-〔分支草案（ovpn3-android，待并入 main 后生效）：安卓连接路径已按 OpenVPN 3 方案落地（见本条残余段修订与 docs/openvpn3安卓接线.md），以下残余口径以修订后为准。〕
+〔2026-11-14 已并入 main：安卓连接路径已按 OpenVPN 3 方案落地（见本条残余段与 docs/openvpn3安卓接线.md）。〕
 代码侧接线完成：① 插件已注册为 app 正式节点来源——导入页
 「节点来源」区可见 VPN Gate 条目，启用必须过插件既有同意状态
 机（风险文案 risk.vpngate.* 三语键，UI 只呈现与确认，无绕过）；
@@ -44,14 +44,14 @@ risk.vpngate.node_line 风险行。④ app 路径真实刷新已实测
 残余项（均为实证而非接线）：VPN Gate 公网实握（L5）未验——
 与真实池节点的完整 OpenVPN 会话尚无公网证据，准入等级在
 公网实握通过前不得对外宣称为已验证可连；Android 端连接
-路径已接线（ovpn3-android 分支，待并入：OpenVPN 3 核心经
-原生桥承载会话，许可证审查取 MPL-2.0 侧通过，桥接引擎与
-桌面错误码同口径，Kotlin 过手工编译门，Go/宿主机原生侧
-证据齐备——docs/openvpn3许可证审查.md、
-docs/openvpn3构建尖峰.md、docs/openvpn3安卓接线.md）；
-并入前 Android 仍按旧口径（不可连接、按钮禁用并给诚实
-原因），并入后残余收敛为：安卓交叉构建 CI 实证、真机端
-到端（.so 加载/同意/实连/计数/回收）、公网实握（L5）；
+路径已接线并并入 main（OpenVPN 3 核心经原生桥承载会话，
+许可证审查取 MPL-2.0 侧通过，桥接引擎与桌面错误码同
+口径，Kotlin 过手工编译门，Go/宿主机原生侧证据齐备——
+docs/openvpn3许可证审查.md、docs/openvpn3构建尖峰.md、
+docs/openvpn3安卓接线.md）；残余收敛为：安卓交叉构建
+CI 实证（CI 作业 openvpn3-android 构建 .so 并注入 APK，
+结论以合并后 CI 为准）、真机端到端（.so 加载/同意/
+实连/计数/回收）、公网实握（L5）；
 真机未验（池子全流程未在真实设备/桌面走过）。来源：
 docs/step14-VPNGate来源插件.md、docs/openvpn进程适配.md
 §6/§7；归属：公网实握与真机验收（Step 20 门）。

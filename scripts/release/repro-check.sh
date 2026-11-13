@@ -125,6 +125,30 @@ check_target() {
         cp "$aar" "$A/android/app/libs/libboxbind.aar"
         cp "$aar" "$B/android/app/libs/libboxbind.aar"
         echo "shell: injected shared input libboxbind.aar (sha256 $(sha256sum "$aar" | cut -d' ' -f1)) into both trees"
+        # Same shared-input treatment for the OpenVPN 3 build
+        # products: the SWIG bindings (net.openvpn.ovpn3) and
+        # libovpn3android.so are gitignored outputs of
+        # android/openvpn3/build-openvpn3-android.sh, and the
+        # Kotlin sources do not compile without them (branch
+        # run 43494569302 failed on exactly that). When the
+        # checkout carries them (CI downloads them from the
+        # openvpn3-android job), inject identical copies into
+        # both trees; when absent, say so — the Gradle build
+        # then fails honestly instead of passing on a tree
+        # that silently lacks the OpenVPN sources.
+        local ovpn3_so="$ROOT/android/app/src/main/jniLibs/arm64-v8a/libovpn3android.so"
+        local ovpn3_java="$ROOT/android/app/src/main/java/net/openvpn/ovpn3"
+        if [ -f "$ovpn3_so" ] && [ -d "$ovpn3_java" ]; then
+            mkdir -p "$A/android/app/src/main/jniLibs/arm64-v8a" "$B/android/app/src/main/jniLibs/arm64-v8a"
+            mkdir -p "$A/android/app/src/main/java/net/openvpn" "$B/android/app/src/main/java/net/openvpn"
+            cp "$ovpn3_so" "$A/android/app/src/main/jniLibs/arm64-v8a/libovpn3android.so"
+            cp "$ovpn3_so" "$B/android/app/src/main/jniLibs/arm64-v8a/libovpn3android.so"
+            cp -r "$ovpn3_java" "$A/android/app/src/main/java/net/openvpn/"
+            cp -r "$ovpn3_java" "$B/android/app/src/main/java/net/openvpn/"
+            echo "shell: injected shared OpenVPN 3 inputs (libovpn3android.so sha256 $(sha256sum "$ovpn3_so" | cut -d' ' -f1) + SWIG bindings) into both trees"
+        else
+            echo "shell: NOTE — OpenVPN 3 build inputs absent in this checkout; the shell build will fail on the net.openvpn.ovpn3 references (produce them with android/openvpn3/build-openvpn3-android.sh)"
+        fi
     fi
     local rc_a rc_b
     build_in "$A" "$target" "$name"; rc_a=$?

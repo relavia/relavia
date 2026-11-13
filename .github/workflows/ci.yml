@@ -81,8 +81,64 @@ jobs:
           path: app/dist/relavia.exe
           if-no-files-found: error
 
+  openvpn3-android:
+    name: openvpn3 (android native library + SWIG bindings, MPL-2.0 side)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - name: Install SWIG 4 + native build tools
+        # SWIG is pinned to the 4.2 series by the spike: the
+        # generated wrapper is version-sensitive
+        # (docs/openvpn3构建尖峰.md §4); ubuntu-latest's apt
+        # ships 4.2.x. No LZO anywhere in this build — GPL-2.0-only
+        # red line (docs/openvpn3许可证审查.md §3).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y swig cmake ninja-build
+          swig -version | head -2
+      - name: Checkout vcpkg (pinned baseline)
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git /tmp/vcpkg
+          git -C /tmp/vcpkg checkout 2024.12.16
+          /tmp/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+      - name: Cache vcpkg downloads + installed tree and the pinned openvpn3 checkout
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/vcpkg/downloads
+            /tmp/vcpkg/installed
+            /tmp/ovpn3-work/openvpn3
+          key: ovpn3-arm64-${{ hashFiles('android/openvpn3/**') }}-vcpkg2024.12.16
+      - name: Build libovpn3android.so + net.openvpn.ovpn3 bindings (arm64-v8a)
+        env:
+          VCPKG_ROOT: /tmp/vcpkg
+          OPENVPN3_WORK: /tmp/ovpn3-work
+        run: |
+          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          echo "NDK: $ANDROID_NDK_HOME"
+          ./android/openvpn3/build-openvpn3-android.sh arm64-v8a
+          ls -la android/app/src/main/jniLibs/arm64-v8a/libovpn3android.so
+          ls android/app/src/main/java/net/openvpn/ovpn3/ | wc -l
+      - name: Upload OpenVPN 3 android inputs (consumed by the android and repro jobs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-openvpn3-android-arm64
+          # Both paths share the android/app/src/main ancestor,
+          # so the artifact restores jniLibs/arm64-v8a/ and
+          # java/net/openvpn/ovpn3/ in place when a consumer
+          # downloads it into android/app/src/main.
+          path: |
+            android/app/src/main/jniLibs/arm64-v8a/libovpn3android.so
+            android/app/src/main/java/net/openvpn/ovpn3
+          if-no-files-found: error
+
   android:
     name: android (cross-compile gate / libbox AAR / merged APK / gio logic APK)
+    needs: openvpn3-android
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,6 +169,18 @@ jobs:
           name: relavia-android-libbox-aar
           path: android/app/libs/libboxbind.aar
           if-no-files-found: error
+      - name: OpenVPN 3 inputs — native library + generated bindings (openvpn3-android job)
+        # The Kotlin OpenVPN 3 sources reference
+        # net.openvpn.ovpn3, a SWIG build product that is
+        # git-ignored by design; without these inputs
+        # assembleDebug fails on unresolved references — the
+        # ovpn3-android branch run 43494569302 failed exactly
+        # there. At runtime the bridge registers only when
+        # the .so is really in the APK (registerIfAvailable).
+        uses: actions/download-artifact@v4
+        with:
+          name: relavia-openvpn3-android-arm64
+          path: android/app/src/main
       - name: Merged APK — Kotlin shell + libbox AAR (Gradle assembleDebug)
         run: ./scripts/build-android.sh shell
       - name: Verify merged APK (native library present, permission set unchanged)
@@ -120,6 +188,10 @@ jobs:
           APK=android/app/build/outputs/apk/debug/app-debug.apk
           unzip -l "$APK"
           unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a|x86_64)/libgojni\.so'
+          # The OpenVPN 3 core must be in the APK (arm64-v8a —
+          # the ABI the openvpn3-android job builds); without
+          # it Android pool nodes silently stay unconnectable.
+          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libovpn3android\.so'
           AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
           PERMS="$("$AAPT2" dump permissions "$APK")"
           echo "$PERMS"
@@ -163,6 +235,7 @@ jobs:
 
   repro:
     name: repro (release tooling + reproducible builds, Step 15)
+    needs: openvpn3-android
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -192,6 +265,14 @@ jobs:
           export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
           export PATH="$HOME/go/bin:$PATH"
           ./scripts/build-android.sh bind
+      - name: OpenVPN 3 inputs — native library + generated bindings (openvpn3-android job)
+        # Shared inputs for the shell reproducibility check,
+        # which injects them into both exported trees exactly
+        # like the libbox AAR (scripts/release/repro-check.sh).
+        uses: actions/download-artifact@v4
+        with:
+          name: relavia-openvpn3-android-arm64
+          path: android/app/src/main
       - name: Reproducibility — windows (hard gate)
         run: ./scripts/release/repro-check.sh windows --report repro-windows.txt
       # shell/gio run evidence-first (continue-on-error): their
