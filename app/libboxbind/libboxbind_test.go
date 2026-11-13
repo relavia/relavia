@@ -49,6 +49,8 @@ type fakeBridge struct {
 	ownerQueries  int
 	posts         []string
 	cancels       []string
+	openURLErr    error
+	openedURLs    []string
 }
 
 func (f *fakeBridge) Prepare() (bool, error) { return f.prepareResult, f.prepareErr }
@@ -118,6 +120,13 @@ func (f *fakeBridge) CancelNotification(identifier string) error {
 	f.cancels = append(f.cancels, identifier)
 	f.mu.Unlock()
 	return nil
+}
+
+func (f *fakeBridge) OpenURL(url string) error {
+	f.mu.Lock()
+	f.openedURLs = append(f.openedURLs, url)
+	f.mu.Unlock()
+	return f.openURLErr
 }
 
 // registerFake installs a fake bridge for one test and

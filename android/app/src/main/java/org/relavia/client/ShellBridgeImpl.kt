@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -366,6 +367,23 @@ object ShellBridgeImpl : ShellBridge {
     private fun notificationIdFor(identifier: String): Int {
         // Keep clear of the service's own NOTIFICATION_ID (1).
         return 100 + (identifier.hashCode() and 0x3fffffff) % 10000
+    }
+
+    // --- open URL in the system browser -----------------------------
+
+    override fun openURL(url: String) {
+        val ctx = appContext ?: throw IllegalStateException("no app context")
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // Bridge calls run on Go goroutines with the
+        // application context (not an Activity), hence the
+        // NEW_TASK flag. When no browser is installed this
+        // throws ActivityNotFoundException, which crosses back
+        // to Go as the open's error — the caller logs it and
+        // shows the address as text rather than pretending the
+        // page opened. The URL itself was already restricted
+        // to https on the Go side.
+        ctx.startActivity(intent)
     }
 
     private const val SERVICE_TIMEOUT_SECONDS = 15L

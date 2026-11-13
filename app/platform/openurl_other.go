@@ -1,19 +1,12 @@
-//go:build !windows && !linux && !darwin
+//go:build !windows && !linux && !darwin && !android
 
 package platform
 
-import "errors"
-
-// ErrOpenURLUnsupported means this build has no browser-open
-// mechanism wired (notably the Android build, where opening a
-// URL needs an Android Intent bridge through the Kotlin shell —
-// a separate follow-up, deliberately not faked here). The
-// caller logs the failure and shows the guide address in plain
-// text instead.
-var ErrOpenURLUnsupported = errors.New("platform: opening a URL is not wired in this build")
-
-// OpenURL always fails on this platform (see
-// ErrOpenURLUnsupported).
+// OpenURL always fails on this platform: it has no
+// browser-open mechanism and no shell bridge (Android, which
+// has one, has its own file). The failure is
+// ErrOpenURLUnsupported (openurl_bridge.go); the caller logs
+// it and shows the guide address in plain text instead.
 func OpenURL(string) error {
 	return ErrOpenURLUnsupported
 }

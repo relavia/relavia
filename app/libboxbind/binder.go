@@ -11,6 +11,9 @@ package libboxbind
 //     registered at process start, so TUN unavailability now
 //     means a REAL failure: consent refused, interface
 //     establishment failed, protect refused.
+//   - shellURLOpener implements app/platform.URLBinder the
+//     same way, behind platform.OpenURL's Android delegation
+//     (the guide entry's browser open).
 //   - tunStarter implements app/android.TunnelStarter: it
 //     compiles the node into the libbox TUN configuration and
 //     starts the service with the choreography's fd parked as
@@ -28,6 +31,21 @@ import (
 	"openproxy/core/singbox"
 	"openproxy/core/specnode"
 )
+
+// shellURLOpener implements platform.URLBinder over
+// ShellBridge, resolving the bridge at call time like
+// shellBinder does.
+type shellURLOpener struct{}
+
+var _ platform.URLBinder = shellURLOpener{}
+
+func (shellURLOpener) OpenURL(url string) error {
+	b := currentBridge()
+	if b == nil {
+		return platform.ErrOpenURLUnsupported
+	}
+	return b.OpenURL(url)
+}
 
 // shellBinder implements platform.VPNBinder over ShellBridge.
 type shellBinder struct{}

@@ -1,4 +1,9 @@
-//go:build linux || darwin
+//go:build (linux || darwin) && !android
+
+// Note the explicit !android: the android target satisfies
+// the linux constraint, so without it this file would also
+// be selected for Android builds and collide with
+// openurl_android.go (verified against the toolchain).
 
 package platform
 

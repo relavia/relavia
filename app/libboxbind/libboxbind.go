@@ -112,6 +112,13 @@ type ShellBridge interface {
 	PostNotification(identifier string, title string, body string) error
 	// CancelNotification dismisses it by identifier.
 	CancelNotification(identifier string) error
+	// OpenURL opens url in the system browser (an ACTION_VIEW
+	// intent in the shell). The Go side validates the URL
+	// (https only, platform.BridgeURLOpener) before
+	// delegating; an error means the system could not open
+	// it (no browser installed, activity start refused) and
+	// the caller falls back to showing the address as text.
+	OpenURL(url string) error
 }
 
 var (
@@ -123,13 +130,15 @@ var (
 // start. It also installs the production VPNBinder into the
 // app/platform registry, which is what upgrades
 // BridgeVPNService (Step 10) from "explicitly unavailable" to
-// the real shell binding.
+// the real shell binding, and the production URLBinder behind
+// platform.OpenURL's Android delegation.
 func RegisterShellBridge(b ShellBridge) {
 	bridgeMu.Lock()
 	bridge = b
 	bridgeMu.Unlock()
 	if b != nil {
 		platform.RegisterVPNBinder(shellBinder{})
+		platform.RegisterURLBinder(shellURLOpener{})
 	}
 }
 
