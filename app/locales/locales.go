@@ -15,13 +15,21 @@
 //     machine-translated.
 //   - Key-set equality and non-empty values across all packs are
 //     enforced by tests and by tools/i18ncheck in CI.
+//   - Community packs (see README.md in this directory) join
+//     Supported only at 100% completeness — present, non-empty,
+//     no [UNTRANSLATED] markers — verified by i18ncheck -extra.
+//     The _template directory is scaffolding for translators:
+//     it is deliberately NOT embedded and NOT in Supported, so
+//     it can never be loaded at runtime.
 package locales
 
 import "embed"
 
-// FS holds every built-in pack: <lang>/messages.json.
+// FS holds the shipped packs only. The embed list is explicit
+// (not a glob) so in-progress community packs and the
+// _template scaffolding are never baked into the binary.
 //
-//go:embed */messages.json
+//go:embed zh-Hans/messages.json zh-Hant/messages.json en/messages.json
 var FS embed.FS
 
 // Supported lists the built-in languages in UI preference order.

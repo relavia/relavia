@@ -22,7 +22,17 @@
 //     ever reach the log view; user-facing capability state is
 //     rendered from cap.* keys driven by Available() booleans.
 //
+// Community packs (Step 18): -extra lang,lang additionally
+// checks in-progress packs found under -locales against the
+// source pack and reports their completeness percent; an extra
+// pack fails the run only with -strict-extra (CI gates shipped
+// packs unconditionally; a community pack must reach 100% —
+// no missing, empty or [UNTRANSLATED] values — before it is
+// promoted into locales.Supported).
+//
 // Usage: i18ncheck [-locales dir] [-scan dir,dir] [-whitelist file]
+//
+//	[-extra lang,lang] [-strict-extra]
 package main
 
 import (
@@ -46,6 +56,8 @@ func main() {
 	localesDir := flag.String("locales", "locales", "language pack directory")
 	scanDirs := flag.String("scan", "ui,cmd", "comma-separated directories to scan for hardcoded strings")
 	whitelistPath := flag.String("whitelist", "tools/i18ncheck/whitelist.txt", "hardcoded-scan whitelist file")
+	extraLangs := flag.String("extra", "", "comma-separated in-progress community packs to also check against the source pack")
+	strictExtra := flag.Bool("strict-extra", false, "fail the run when an -extra pack is incomplete")
 	flag.Parse()
 
 	failed := false
@@ -62,21 +74,48 @@ func main() {
 			sourceKeys[k] = true
 		}
 	}
+	printReport := func(rep i18n.PackReport) {
+		fmt.Printf("pack %-8s keys=%d missing=%d extra=%d empty=%d untranslated=%d completeness=%.1f%%\n",
+			rep.Lang, rep.Keys, len(rep.MissingKeys), len(rep.ExtraKeys), len(rep.EmptyKeys),
+			len(rep.UntranslatedKey), rep.Completeness(len(sourceKeys)))
+		for _, k := range rep.MissingKeys {
+			fmt.Printf("  MISSING      %s: %s\n", rep.Lang, k)
+		}
+		for _, k := range rep.ExtraKeys {
+			fmt.Printf("  EXTRA        %s: %s\n", rep.Lang, k)
+		}
+		for _, k := range rep.EmptyKeys {
+			fmt.Printf("  EMPTY        %s: %s\n", rep.Lang, k)
+		}
+		for _, k := range rep.UntranslatedKey {
+			fmt.Printf("  UNTRANSLATED %s: %s\n", rep.Lang, k)
+		}
+	}
 	for _, rep := range reports {
-		fmt.Printf("pack %-8s keys=%d missing=%d extra=%d empty=%d\n",
-			rep.Lang, rep.Keys, len(rep.MissingKeys), len(rep.ExtraKeys), len(rep.EmptyKeys))
+		printReport(rep)
 		if !rep.OK() {
 			failed = true
-			for _, k := range rep.MissingKeys {
-				fmt.Printf("  MISSING %s: %s\n", rep.Lang, k)
-			}
-			for _, k := range rep.ExtraKeys {
-				fmt.Printf("  EXTRA   %s: %s\n", rep.Lang, k)
-			}
-			for _, k := range rep.EmptyKeys {
-				fmt.Printf("  EMPTY   %s: %s\n", rep.Lang, k)
+		}
+	}
+	if *extraLangs != "" {
+		var extras []string
+		for _, l := range strings.Split(*extraLangs, ",") {
+			if l = strings.TrimSpace(l); l != "" {
+				extras = append(extras, l)
 			}
 		}
+		extraReports, err := i18n.CheckPacks(os.DirFS(*localesDir), extras, locales.Source)
+		if err != nil {
+			fmt.Println("i18ncheck: extra pack check error:", err)
+			os.Exit(1)
+		}
+		for _, rep := range extraReports {
+			printReport(rep)
+			if !rep.OK() && *strictExtra {
+				failed = true
+			}
+		}
+		reports = append(reports, extraReports...)
 	}
 
 	// --- 2. hardcoded scan --------------------------------------

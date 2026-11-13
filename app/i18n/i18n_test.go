@@ -87,6 +87,46 @@ func TestDirectionReservation(t *testing.T) {
 	}
 }
 
+// A community scaffolding pack (values still carrying the
+// [UNTRANSLATED] marker) must be reported as incomplete with an
+// honest completeness percentage — it can never pass as done
+// (Step 18 translation-entry gate).
+func TestCheckPacksFlagsUntranslated(t *testing.T) {
+	fsys := fstest.MapFS{
+		"zh-Hans/messages.json": {Data: []byte(`{"a":"甲","b":"乙","c":"丙"}`)},
+		"xx/messages.json":      {Data: []byte(`{"a":"[UNTRANSLATED] A","b":"translated"}`)},
+	}
+	reports, err := i18n.CheckPacks(fsys, []string{"xx"}, "zh-Hans")
+	if err != nil {
+		t.Fatalf("CheckPacks: %v", err)
+	}
+	rep := reports[0]
+	if rep.OK() {
+		t.Fatal("scaffolding pack reported OK")
+	}
+	if len(rep.UntranslatedKey) != 1 || rep.UntranslatedKey[0] != "a" {
+		t.Errorf("UntranslatedKey = %v, want [a]", rep.UntranslatedKey)
+	}
+	if len(rep.MissingKeys) != 1 || rep.MissingKeys[0] != "c" {
+		t.Errorf("MissingKeys = %v, want [c]", rep.MissingKeys)
+	}
+	if got := rep.Completeness(3); got < 33.3 || got > 33.4 {
+		t.Errorf("Completeness = %v, want ~33.3", got)
+	}
+	// The shipped packs must contain no marker anywhere.
+	for _, lang := range locales.Supported {
+		p, err := i18n.LoadPack(locales.FS, lang)
+		if err != nil {
+			t.Fatalf("LoadPack(%s): %v", lang, err)
+		}
+		for k, v := range p.Messages {
+			if strings.Contains(v, i18n.UntranslatedMarker) {
+				t.Errorf("shipped pack %s key %s carries the untranslated marker", lang, k)
+			}
+		}
+	}
+}
+
 // Risk-disclosure strings must exist in every shipped pack; they
 // are the strings the book forbids from shipping machine
 // translated, so their presence is asserted explicitly.

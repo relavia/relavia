@@ -167,14 +167,36 @@ func lookup(packs map[string]*Pack, lang, key string) (string, bool) {
 // Pack integrity checking (shared by tests and tools/i18ncheck)
 // ----------------------------------------------------------------
 
+// UntranslatedMarker prefixes every value of a community
+// template pack (locales/_template): the value after the marker
+// is the untranslated English original. A pack value carrying
+// the marker counts as NOT translated by CheckPacks, so a
+// scaffolding pack can never masquerade as complete. Shipped
+// packs must contain no marker anywhere (Step 18).
+const UntranslatedMarker = "[UNTRANSLATED]"
+
 // PackReport describes one pack's integrity against the source.
 type PackReport struct {
-	Lang         string
-	Keys         int
-	MissingKeys  []string // in source but absent here
-	ExtraKeys    []string // here but absent in source
-	EmptyKeys    []string // present but empty/whitespace
-	DuplicateRaw []string // duplicated keys in the raw JSON (best effort)
+	Lang            string
+	Keys            int
+	MissingKeys     []string // in source but absent here
+	ExtraKeys       []string // here but absent in source
+	EmptyKeys       []string // present but empty/whitespace
+	UntranslatedKey []string // present but still carrying UntranslatedMarker
+	DuplicateRaw    []string // duplicated keys in the raw JSON (best effort)
+}
+
+// Completeness is the translated fraction in percent: keys of
+// the source pack that are present, non-empty and translated.
+func (r PackReport) Completeness(sourceKeys int) float64 {
+	if sourceKeys <= 0 {
+		return 100
+	}
+	done := sourceKeys - len(r.MissingKeys) - len(r.EmptyKeys) - len(r.UntranslatedKey)
+	if done < 0 {
+		done = 0
+	}
+	return float64(done) * 100 / float64(sourceKeys)
 }
 
 // CheckPacks loads every pack in langs from fsys and compares key
@@ -197,6 +219,8 @@ func CheckPacks(fsys fs.FS, langs []string, source string) ([]PackReport, error)
 				rep.MissingKeys = append(rep.MissingKeys, k)
 			} else if strings.TrimSpace(v) == "" {
 				rep.EmptyKeys = append(rep.EmptyKeys, k)
+			} else if lang != source && strings.Contains(v, UntranslatedMarker) {
+				rep.UntranslatedKey = append(rep.UntranslatedKey, k)
 			}
 		}
 		for k := range p.Messages {
@@ -207,6 +231,7 @@ func CheckPacks(fsys fs.FS, langs []string, source string) ([]PackReport, error)
 		sort.Strings(rep.MissingKeys)
 		sort.Strings(rep.ExtraKeys)
 		sort.Strings(rep.EmptyKeys)
+		sort.Strings(rep.UntranslatedKey)
 		reports = append(reports, rep)
 	}
 	return reports, nil
@@ -214,5 +239,6 @@ func CheckPacks(fsys fs.FS, langs []string, source string) ([]PackReport, error)
 
 // OK reports whether the pack is complete and clean.
 func (r PackReport) OK() bool {
-	return len(r.MissingKeys) == 0 && len(r.ExtraKeys) == 0 && len(r.EmptyKeys) == 0
+	return len(r.MissingKeys) == 0 && len(r.ExtraKeys) == 0 && len(r.EmptyKeys) == 0 &&
+		len(r.UntranslatedKey) == 0
 }
