@@ -4,9 +4,13 @@
 #
 # This file is Relavia's own build glue (GPL-3.0-or-later, like
 # the rest of the client). It consumes the pinned upstream
-# openvpn3 tree (OPENVPN3_SRC) and the arm64-android vcpkg
-# install tree (VCPKG_INSTALLED_DIR) and produces the single
-# shared library the APK ships in jniLibs/<abi>/:
+# openvpn3 tree (OPENVPN3_SRC) and a vcpkg install tree
+# (VCPKG_INSTALLED_DIR) and produces the single shared library
+# the APK ships in jniLibs/<abi>/. VCPKG_INSTALLED_DIR follows
+# the vcpkg toolchain's own semantics: the *parent* installed
+# dir, with the triplet subdir appended by the toolchain; when
+# invoked without the vcpkg toolchain it may also be the triplet
+# dir itself. The resolution below accepts both.
 #
 #   ovpncli.cpp          upstream client implementation
 #   ovpncli_wrap.cpp     SWIG-generated JNI wrapper (build-time)
@@ -23,14 +27,24 @@ if(NOT DEFINED OPENVPN3_SRC)
   message(FATAL_ERROR "OPENVPN3_SRC (pinned openvpn3 checkout) is required")
 endif()
 if(NOT DEFINED VCPKG_INSTALLED_DIR)
-  message(FATAL_ERROR "VCPKG_INSTALLED_DIR (arm64-android install tree) is required")
+  message(FATAL_ERROR "VCPKG_INSTALLED_DIR (vcpkg installed dir) is required")
+endif()
+# The dependency tree actually consumed below: the triplet
+# subdir when the vcpkg toolchain is in play (it defines
+# VCPKG_TARGET_TRIPLET and treats VCPKG_INSTALLED_DIR as the
+# parent), else VCPKG_INSTALLED_DIR as passed.
+if(DEFINED VCPKG_TARGET_TRIPLET AND
+   EXISTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+  set(OVPN3_DEPS_TREE "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+else()
+  set(OVPN3_DEPS_TREE "${VCPKG_INSTALLED_DIR}")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-list(APPEND CMAKE_PREFIX_PATH ${VCPKG_INSTALLED_DIR})
+list(APPEND CMAKE_PREFIX_PATH ${OVPN3_DEPS_TREE})
 find_package(OpenSSL REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
@@ -41,7 +55,7 @@ find_package(jsoncpp CONFIG REQUIRED)
 # linker path; distro packages sit in the default path).
 find_package(lz4 CONFIG QUIET)
 find_package(xxHash CONFIG QUIET)
-find_path(ASIO_INCLUDE_DIR NAMES asio.hpp HINTS ${VCPKG_INSTALLED_DIR}/include REQUIRED)
+find_path(ASIO_INCLUDE_DIR NAMES asio.hpp HINTS ${OVPN3_DEPS_TREE}/include REQUIRED)
 
 add_library(ovpn3android SHARED
   ${OPENVPN3_SRC}/client/ovpncli.cpp

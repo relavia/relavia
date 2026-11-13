@@ -76,7 +76,13 @@ for ABI in "${ABIS[@]}"; do
     -DVCPKG_TARGET_TRIPLET="$TRIPLET" \
     -DANDROID_ABI="$ABI" -DANDROID_PLATFORM=android-$NDK_MIN_API \
     -DCMAKE_BUILD_TYPE=Release \
-    -DOPENVPN3_SRC="$SRC" -DVCPKG_INSTALLED_DIR="$INSTALLED"
+    -DOPENVPN3_SRC="$SRC" -DVCPKG_INSTALLED_DIR="$VCPKG_ROOT/installed"
+  # NOTE: VCPKG_INSTALLED_DIR above is the vcpkg *parent* installed
+  # dir — vcpkg.cmake appends /<triplet> itself when building its
+  # search roots. Passing the triplet dir here (as this script
+  # originally did) made vcpkg search installed/<triplet>/<triplet>
+  # and FindOpenSSL still missed (CI run 43500654298). The glue
+  # CMakeLists resolves the triplet subdir from this parent.
   # The generated wrapper is a build input of our CMakeLists;
   # stage it where the build expects it.
   cp "$GEN/ovpncli_wrap.cpp" "$GEN/ovpncli_wrap.h" "$WORK/build-$ABI/"
