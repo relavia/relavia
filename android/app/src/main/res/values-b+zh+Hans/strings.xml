@@ -9,7 +9,4 @@
     <string name="notif_title_connecting">正在连接…</string>
     <string name="notif_action_disconnect">断开连接</string>
     <string name="vpn_permission_denied">未获得 VPN 权限，无法建立连接。你可以在下次连接时再次授权。</string>
-    <string name="main_status_idle">未连接</string>
-    <string name="main_connect">连接</string>
-    <string name="main_disconnect">断开</string>
 </resources>

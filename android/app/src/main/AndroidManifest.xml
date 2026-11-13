@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Relavia Android shell manifest (Step 10).
+  Relavia Android manifest (Step 10; product UI hosting added
+  per docs/android产品界面接入.md).
 
   Only public Android APIs are used — no root, no system
   signature permissions. The VPN facility is the stock
   android.net.VpnService, declared exactly as the platform
   requires (BIND_VPN_SERVICE + the VpnService intent filter).
+
+  The LAUNCHER is the product UI itself: org.gioui.GioActivity
+  (vendored Gio classes in this project) hosting the Go/Gio
+  surface — nodes, import, sources, settings. The Step 10
+  shell page is retired; what remains of the shell is
+  infrastructure: RelaviaApp (bootstrap), ConsentActivity
+  (the VpnService consent dialog surface for the Go bridge)
+  and RelaviaVpnService.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -19,18 +28,38 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".RelaviaApp"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true">
 
+        <!-- The product UI (Go/Gio). Attributes mirror the
+             manifest gogio generates for this same activity:
+             Gio handles configuration changes itself, the
+             soft-input mode keeps the view resized for the
+             on-screen keyboard, and singleInstance keeps one
+             product window per install. -->
         <activity
-            android:name=".MainActivity"
-            android:exported="true">
+            android:name="org.gioui.GioActivity"
+            android:configChanges="screenSize|screenLayout|smallestScreenSize|orientation|keyboardHidden"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:launchMode="singleInstance"
+            android:theme="@style/Theme.RelaviaGio"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Invisible consent surface for the Go bridge: runs
+             the system VpnService consent dialog and reports
+             to ShellBridgeImpl. Never a launcher. -->
+        <activity
+            android:name=".ConsentActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service
             android:name=".RelaviaVpnService"

@@ -8,7 +8,7 @@
 > P3 = 轻微（体验项与工程债，无功能影响）。
 > 每项标注来源文档与归属步骤，口径与各步文档原文一致，不缩水。
 
-**P0：无已知 P0。** 以下 P1 共 6 项、P2 共 7 项、P3 共 6 项。
+**P0：无已知 P0。** 以下 P1 共 7 项、P2 共 7 项、P3 共 6 项。
 
 ## P1
 
@@ -65,6 +65,22 @@ Beta 构建同源」。v1.0 前由发行负责人生成正式钥、回填
 app/service/releasekey.go 并随版本换钥；换钥后测试钥签出的清单
 将被正式版客户端拒绝。来源：app/service/releasekey.go 横幅、
 docs/step15-签名与可复现构建.md §9；归属：Step 20。
+
+### KI-20 Android 曾只有壳页、无产品界面（已接线，真机复测待验）
+2026-11-14 用户真机实测发现：合并 APK 的 LAUNCHER 是 Step 10
+的 Kotlin 壳页（状态文案＋连接/断开两钮），产品界面（Gio：
+节点/导入/来源/设置）从未被接为安卓入口，只存在于 gogio
+逻辑包中——装上后无节点可选、无从连接。本步已接线
+（docs/android产品界面接入.md）：LAUNCHER 换为
+org.gioui.GioActivity 承载 app/ui 产品界面（单一 Go 运行时
+内与 libbox 数据面共存）；界面连接走新增 TUN 引擎到既有
+ShellBridge 同意流与 libbox 编排，同意面独立为
+ConsentActivity；壳页 MainActivity 删除；CI 合并包校验新增
+LAUNCHER 断言防回潮。仍未验：新合并包的真机端到端（界面
+出现→选节点→同意弹窗→TUN 贯通→流量实走）须用户复测后
+本项才可关闭；Gio 与 gomobile 同 .so 共存的首帧/视图重建
+行为目前只有构建层与代码路径证据。归属：真机复测
+（Step 20 门）。
 
 ### KI-06 Android Beta 包为 debug 签名
 合并 APK 的签名证书为 CN=Android Debug（证书 SHA-256

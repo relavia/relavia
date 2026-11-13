@@ -17,15 +17,18 @@
 // interface (book 8.2); the TUN connect choreography itself
 // lives in openproxy/app/android and is exercised by its tests.
 //
-// Posture of this Gio build until the libbox binding lands: it
-// is a logic/UI validation shell. The in-process kernel runs as
-// on desktop; the VpnService bridge reports unavailable unless
-// a binder is registered, and TUN-mode connects refuse
-// explicitly (adapter capability, Step 7). A logic-validation
-// variant (RELAVIA_FAKE_VPN=1 in the app environment) registers
-// the platform fake so the consent -> establish -> fd hand-off
-// choreography can be exercised on a device; it carries NO real
-// traffic and announces that in the log with the
+// Posture of this Gio build: it is a logic/UI validation
+// shell, and since docs/android产品界面接入.md it is no
+// longer the product surface — the merged Gradle APK hosts
+// the same Gio UI in-process next to the libbox data plane.
+// Here the in-process kernel runs as on desktop; the
+// VpnService bridge reports unavailable unless a binder is
+// registered, and TUN-mode connects refuse explicitly
+// (adapter capability, Step 7). A logic-validation variant
+// (RELAVIA_FAKE_VPN=1 in the app environment) registers the
+// platform fake so the consent -> establish -> fd hand-off
+// choreography can be exercised on a device; it carries NO
+// real traffic and announces that in the log with the
 // android.fake_vpn_notice pack string.
 package main
 

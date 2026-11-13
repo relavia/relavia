@@ -122,7 +122,7 @@ object ShellBridgeImpl : ShellBridge {
     @Volatile
     private var consentGranted: Boolean = false
 
-    /** MainActivity reports the consent dialog outcome here. */
+    /** ConsentActivity reports the consent dialog outcome here. */
     fun onConsentResult(granted: Boolean) {
         consentGranted = granted
         consentLatch?.countDown()
@@ -132,15 +132,16 @@ object ShellBridgeImpl : ShellBridge {
         val ctx = appContext ?: return false
         if (VpnService.prepare(ctx) == null) return true
         // Consent is missing: route the system dialog through
-        // MainActivity (only an Activity can show it) and wait,
-        // bounded. From a background state Android may refuse
-        // the activity start; that surfaces as false (refused),
-        // which the Go side maps to its typed permission error.
+        // ConsentActivity (only an Activity can show it) and
+        // wait, bounded. From a background state Android may
+        // refuse the activity start; that surfaces as false
+        // (refused), which the Go side maps to its typed
+        // permission error.
         val latch = CountDownLatch(1)
         consentLatch = latch
         consentGranted = false
-        val intent = Intent(ctx, MainActivity::class.java)
-            .setAction(MainActivity.ACTION_CONSENT)
+        val intent = Intent(ctx, ConsentActivity::class.java)
+            .setAction(ConsentActivity.ACTION_CONSENT)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
             ctx.startActivity(intent)

@@ -28,6 +28,7 @@ import (
 
 	"openproxy/core/kernel"
 
+	"openproxy/app/android"
 	"openproxy/app/i18n"
 	"openproxy/app/locales"
 	"openproxy/app/platform"
@@ -318,6 +319,13 @@ func ErrorKey(err error) string {
 	switch {
 	case errors.Is(err, service.ErrNoNodeSelected):
 		return "err.no_node_selected"
+	case errors.Is(err, android.ErrPermissionDenied):
+		// The OS VPN consent was refused (Android TUN
+		// choreography). The pack string is the same one the
+		// Android shell surfaces: it tells the user the
+		// connection was not established and consent can be
+		// granted on the next attempt.
+		return "android.vpn_permission_denied"
 	case errors.Is(err, service.ErrNoTestedNode):
 		return "err.no_tested_node"
 	case errors.Is(err, service.ErrNoEngine):
@@ -424,8 +432,15 @@ func (a *App) layoutFooter(gtx layout.Context) layout.Dimensions {
 		func(gtx layout.Context) layout.Dimensions {
 			children := []layout.FlexChild{
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					// The label follows the service's actual
+					// run mode: on Android the session is TUN
+					// (book 8.2) and calling it "manual" would
+					// be a false statement about where traffic
+					// goes; desktop keeps the manual labels.
 					mode := a.T("mode.manual", nil)
-					if addr := a.svc.MixedAddr(); addr != "" {
+					if a.svc.Mode() == kernel.ModeTUN {
+						mode = a.T("mode.tun", nil)
+					} else if addr := a.svc.MixedAddr(); addr != "" {
 						mode = a.T("mode.manual_addr", map[string]string{"addr": addr})
 					}
 					return material.Caption(a.th, a.T("mode.label", nil)+": "+mode).Layout(gtx)

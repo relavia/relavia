@@ -134,6 +134,13 @@ jobs:
           for p in INTERNET ACCESS_NETWORK_STATE FOREGROUND_SERVICE FOREGROUND_SERVICE_SPECIAL_USE POST_NOTIFICATIONS; do
             echo "$PERMS" | grep -q "uses-permission: name='android.permission.$p'" || { echo "verify: missing permission $p" >&2; exit 1; }
           done
+          # The LAUNCHER must be the product UI (Gio), never the
+          # retired Step 10 shell page: a real-device test found
+          # the shell page as the only surface while the product
+          # UI existed only in the separate gogio logic APK
+          # (docs/android产品界面接入.md). Guard the regression
+          # at the artifact level.
+          "$AAPT2" dump badging "$APK" | grep -q "launchable-activity: name='org.gioui.GioActivity'" || { echo "verify: LAUNCHER is not org.gioui.GioActivity" >&2; "$AAPT2" dump badging "$APK" | grep launchable-activity >&2; exit 1; }
       - name: Upload merged APK artifact
         uses: actions/upload-artifact@v4
         with:

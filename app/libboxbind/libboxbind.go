@@ -146,8 +146,19 @@ func currentBridge() ShellBridge {
 // set up lazily on first service start: libbox.Setup hijacks
 // the process stderr into its crash log, which must not happen
 // before the shell has finished starting.
+//
+// Setup is also the product UI's start signal
+// (docs/android产品界面接入.md §4): every shell entry point
+// funnels through it before any surface exists, and the
+// gomobile library has no main of its own for Gio's Java side
+// to run, so the window loop launches from here (Android
+// builds only; a no-op elsewhere).
 func Setup(basePath, workingPath, tempPath string) error {
-	return manager.configure(basePath, workingPath, tempPath)
+	if err := manager.configure(basePath, workingPath, tempPath); err != nil {
+		return err
+	}
+	maybeStartProductUI()
+	return nil
 }
 
 // StartService starts (or reloads) the sing-box service with

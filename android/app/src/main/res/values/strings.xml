@@ -21,7 +21,4 @@
     <string name="notif_title_connecting">Connecting…</string>
     <string name="notif_action_disconnect">Disconnect</string>
     <string name="vpn_permission_denied">VPN permission was not granted, so no connection could be established. You can grant it next time you connect.</string>
-    <string name="main_status_idle">Not connected</string>
-    <string name="main_connect">Connect</string>
-    <string name="main_disconnect">Disconnect</string>
 </resources>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Window themes for the merged APK (docs/android产品界面接入.md).
+
+  Theme.RelaviaGio is the product window's theme: Gio draws
+  every pixel itself (including its own status-bar coloring
+  through the JNI driver), so the theme only supplies the
+  window chrome defaults — no action bar, opaque light
+  background behind the first frame. It plays the role
+  Theme.GioApp plays in gogio-generated projects.
+-->
+<resources>
+    <style name="Theme.RelaviaGio" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

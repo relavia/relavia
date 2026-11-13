@@ -8,12 +8,17 @@
 #      with the SagerNet gomobile fork pinned by sing-box
 #      v1.14.4's own Makefile (v0.1.13); needs Go + an NDK.
 #   2. Kotlin VpnService shell APK (android/) — the production
-#      shell; with the AAR in android/app/libs/ this is the
-#      MERGED APK (shell + real data plane). Built with Gradle;
-#      needs JDK 17 + Android SDK (platform 34, build-tools).
+#      APK; with the AAR in android/app/libs/ this is the
+#      MERGED APK: shell + real data plane + the product Gio
+#      UI, which the AAR's library hosts in-process and the
+#      shell's vendored org.gioui activity presents as the
+#      LAUNCHER (docs/android产品界面接入.md). Built with
+#      Gradle; needs JDK 17 + Android SDK (platform 34,
+#      build-tools).
 #   3. Gio logic-build APK (app/cmd/relavia-android) — the Go
-#      service/UI validation shell. Built with gogio; needs the
-#      same SDK plus an NDK and Go.
+#      service/UI validation shell (no longer the product
+#      surface; kept as a build/logic gate). Built with gogio;
+#      needs the same SDK plus an NDK and Go.
 #
 # Usage:
 #   ./scripts/build-android.sh check   # Go-side GOOS=android cross-compile gate only (no SDK needed)

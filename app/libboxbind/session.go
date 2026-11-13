@@ -1,15 +1,19 @@
 package libboxbind
 
 // The app session: the libboxbind-side assembly of the Step 9
-// service layer + Step 10 choreography for the Android shell.
-// The shell drives exactly three product entries —
-// StartSession, StopSession, SessionStatus — plus Localize for
-// its own (minimal, bootstrap) UI text. Logic mirrors
-// app/cmd/relavia-android (the Gio entry): same store layout
-// (<base>/Relavia/store.json), same engine wiring, same
-// default language fallback; the Android differences are the
-// production starter/binder and the Step 11 default TUN
-// routing policy, which the Gio logic build does not run.
+// service layer + Step 10 choreography for Android. The shell
+// drives exactly three product entries — StartSession,
+// StopSession, SessionStatus — plus Localize for its own
+// (minimal, bootstrap) UI text; the in-process Gio product UI
+// (ui_android.go) drives the SAME assembly through the service
+// layer, so both surfaces share one store, one service and one
+// choreography (docs/android产品界面接入.md). Store layout
+// (<base>/Relavia/store.json) and the default language
+// fallback mirror app/cmd/relavia-android (the gogio logic
+// entry); the engine wiring does NOT — here the dispatch's
+// sing-box slot is the TUN engine (engine.go), and the Step 11
+// default TUN routing policy applies, neither of which the
+// Gio logic build runs.
 
 import (
 	"context"
@@ -18,7 +22,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"openproxy/app/android"
 	"openproxy/app/i18n"
@@ -90,11 +93,19 @@ func (s *appSession) ensureBuiltLocked() error {
 			svc.OnKernelLog(level, message)
 		}
 	}
-	// Protocol dispatch mirrors cmd/relavia-android, including
-	// the honestly-unavailable Android OpenVPN slot, plus the
-	// VPN Gate pool source.
+	// Protocol dispatch for Android (docs/android产品界面
+	// 接入.md §3): the sing-box slot is the TUN engine, whose
+	// connects run this package's choreography (consent ->
+	// shell TUN -> libbox) — NOT the desktop in-process
+	// adapter, whose listener would route nothing here. The
+	// in-process adapter survives as the engine's probe for
+	// handshake tests and spec validation. The OpenVPN slot
+	// stays honestly unavailable, and the VPN Gate pool
+	// source attaches as on every platform.
+	probe := service.NewSingBoxEngine(logSink)
+	tunEng := newTUNEngine(probe)
 	engine := service.NewDispatchEngine(
-		service.NewSingBoxEngine(logSink),
+		tunEng,
 		service.NewAndroidOpenVPNEngine(),
 	)
 	svc = service.New(store, engine)
@@ -123,6 +134,9 @@ func (s *appSession) ensureBuiltLocked() error {
 	s.shell = android.NewShell(svc, tr, android.Options{
 		Starter: &tunStarter{fragment: fragment},
 	})
+	// Late-bind the shell into the TUN engine now that both
+	// exist: from here on svc.Connect IS the choreography.
+	tunEng.bind(s.shell)
 	s.svc = svc
 	s.tr = tr
 	trAtomic.Store(tr)
@@ -145,11 +159,12 @@ func startSession() error {
 	if nodeID == "" {
 		return errors.New("libboxbind: no node selected")
 	}
-	// The outer bound covers the shell's consent wait plus
-	// interface establishment plus box start.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	if err := session.shell.Connect(ctx, nodeID); err != nil {
+	// svc.Connect reaches the choreography through the TUN
+	// engine bound into the session's dispatch (engine.go);
+	// the engine applies the session time bound itself, which
+	// covers the shell's consent wait plus interface
+	// establishment plus box start.
+	if err := session.svc.Connect(context.Background(), nodeID); err != nil {
 		session.lastErr = err.Error()
 		return err
 	}
@@ -163,9 +178,10 @@ func stopSession() error {
 	if session.shell == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := session.shell.Disconnect(ctx); err != nil {
+	// svc.Disconnect -> dispatch Stop -> TUN engine StopTUN:
+	// the choreography's unwind order (box stop -> interface
+	// close -> service teardown), with the engine's own bound.
+	if err := session.svc.Disconnect(context.Background()); err != nil {
 		session.lastErr = err.Error()
 		return err
 	}

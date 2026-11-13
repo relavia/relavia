@@ -10,9 +10,11 @@
 // owning android.net.VpnService, plus this Go side bound through
 // gomobile as libbox's host. The shell registers a
 // platform.VPNBinder; this package orchestrates the connect
-// choreography across the bridge. Gio provides the Android UI
-// surface in the meantime (cmd/relavia-android) on top of the
-// identical service layer.
+// choreography across the bridge. The product UI is the Gio
+// surface (app/ui): since docs/android产品界面接入.md it runs
+// in-process inside the merged APK over this same assembly;
+// cmd/relavia-android remains the standalone logic-validation
+// build of that surface.
 //
 // Honesty contract: with no binder registered, or with the
 // placeholder TunnelStarter, a TUN connect fails explicitly —
@@ -88,8 +90,9 @@ func (UnavailableQRScanner) Scan(context.Context) (string, error) {
 }
 
 // Shell is the assembled Android client: service layer +
-// translator + the VPN choreography. The UI (Gio today, the
-// Kotlin shell's embedded views later) drives it.
+// translator + the VPN choreography. The Gio product UI
+// drives it (in-process in the merged APK; through the shell
+// facade in the Kotlin shell's session entries).
 type Shell struct {
 	Service    *service.Service
 	Translator *i18n.Translator
@@ -149,12 +152,36 @@ func (s *Shell) Connect(ctx context.Context, nodeID string) error {
 	if s.Service.Mode() != kernel.ModeTUN {
 		return s.Service.Connect(ctx, nodeID)
 	}
-	if s.handle != nil {
-		return ErrAlreadyConnected
-	}
 	rec, ok := s.Service.Store().NodeByID(nodeID)
 	if !ok {
 		return service.ErrNoNodeSelected
+	}
+	if err := s.connectNode(ctx, rec.Node); err != nil {
+		return err
+	}
+	s.Service.SelectNode(nodeID)
+	return nil
+}
+
+// ConnectNode runs the TUN choreography for a node the caller
+// already resolved. It is the entry the service layer's engine
+// path uses (docs/android产品界面接入.md): service.Connect
+// owns selection persistence and logging, so this method only
+// performs consent -> establish -> data-plane start and does
+// not touch the store. Mode is TUN by construction — Android
+// has no other product mode (book 8.2).
+func (s *Shell) ConnectNode(ctx context.Context, n *specnode.Node) error {
+	if n == nil {
+		return service.ErrNoNodeSelected
+	}
+	return s.connectNode(ctx, n)
+}
+
+// connectNode is the shared choreography behind Connect and
+// ConnectNode.
+func (s *Shell) connectNode(ctx context.Context, n *specnode.Node) error {
+	if s.handle != nil {
+		return ErrAlreadyConnected
 	}
 	if !s.vpn.Available() {
 		return platform.ErrUnavailable
@@ -171,23 +198,39 @@ func (s *Shell) Connect(ctx context.Context, nodeID string) error {
 		return err
 	}
 	opts := kernel.PlatformOptions{Mode: kernel.ModeTUN}
-	if err := s.starter.StartWithTUN(ctx, rec.Node, handle.FD(), opts); err != nil {
+	if err := s.starter.StartWithTUN(ctx, n, handle.FD(), opts); err != nil {
 		_ = handle.Close()
 		_ = s.vpn.Teardown(ctx)
 		return err
 	}
 	s.handle = handle
-	s.Service.SelectNode(nodeID)
 	return nil
 }
 
 // Disconnect ends the session: data plane first, then the TUN
 // handle, then the shell-side teardown (notification removal).
 // All three run even when an earlier step fails; the first
-// error is returned.
+// error is returned. With no TUN session live it defers to the
+// service layer (the manual-mode logic path Connect defers to
+// as well).
 func (s *Shell) Disconnect(ctx context.Context) error {
 	if s.handle == nil {
 		return s.Service.Disconnect(ctx)
+	}
+	return s.StopTUN(ctx)
+}
+
+// StopTUN unwinds ONLY the TUN side — starter, handle, shell
+// teardown — and never defers to the service layer. It is the
+// stop used by the service engine path: routing it through
+// Disconnect would recurse (engine Stop -> Disconnect ->
+// service Disconnect -> engine Stop). Safe with no session
+// live: the starter's Stop is idempotent, so an engine Stop
+// after a failed or never-attempted connect cannot leak a box
+// the starter may have half-started out of band.
+func (s *Shell) StopTUN(ctx context.Context) error {
+	if s.handle == nil {
+		return s.starter.Stop(ctx)
 	}
 	var first error
 	if err := s.starter.Stop(ctx); err != nil && first == nil {
