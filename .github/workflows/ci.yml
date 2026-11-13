@@ -143,6 +143,61 @@ jobs:
           path: app/dist/relavia-logic.apk
           if-no-files-found: error
 
+  repro:
+    name: repro (release tooling + reproducible builds, Step 15)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Release tool (build / vet / test)
+        working-directory: tools/releasetool
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
+      - name: Install gomobile + gogio (versions pinned by the build scripts)
+        run: |
+          go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+          go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+          go install gioui.org/cmd/gogio@v0.10.3
+      - name: libbox AAR (shared input for the shell reproducibility check)
+        run: |
+          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          export PATH="$HOME/go/bin:$PATH"
+          ./scripts/build-android.sh bind
+      - name: Reproducibility — windows (hard gate)
+        run: ./scripts/release/repro-check.sh windows --report repro-windows.txt
+      # shell/gio run evidence-first (continue-on-error): their
+      # byte-reproducibility under Gradle/gogio+NDK has no CI track
+      # record yet. The reports are uploaded either way; promote a
+      # target to a hard gate only once it is green on evidence
+      # (docs/step15-签名与可复现构建.md).
+      - name: Reproducibility — android shell APK (evidence; not yet a gate)
+        continue-on-error: true
+        run: ./scripts/release/repro-check.sh shell --report repro-shell.txt
+      - name: Reproducibility — gio logic APK (evidence; not yet a gate)
+        continue-on-error: true
+        run: |
+          export ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
+          export PATH="$HOME/go/bin:$PATH"
+          ./scripts/release/repro-check.sh gio --report repro-gio.txt
+      - name: Upload reproducibility reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-repro-reports
+          path: repro-*.txt
+          if-no-files-found: warn
+
   plugins:
     name: plugins (source plugins build / vet / test)
     runs-on: ubuntu-latest

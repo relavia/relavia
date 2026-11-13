@@ -104,24 +104,15 @@ build_shell() {
 }
 
 build_gio() {
-    require_shell_tools
-    command -v gogio >/dev/null 2>&1 || {
-        echo "build-android: gogio not found; install with: go install gioui.org/cmd/gogio@v0.10.3" >&2
-        exit 3
-    }
-    if [ -z "${ANDROID_NDK_HOME:-}" ] && [ -z "${ANDROID_NDK_ROOT:-}" ]; then
-        echo "build-android: gogio needs an Android NDK (set ANDROID_NDK_HOME)" >&2
-        exit 3
-    fi
-    # gogio -version must be major.minor.patch.versioncode ("0.1.0.1"
-    # = versionName 0.1.0 + versionCode 1, matching the Gradle shell);
-    # a bare "1" is rejected as invalid semver (CI run 43290011677).
-    echo "== Gio logic-build APK (gogio) =="
+    # Since Step 15 the gogio build lives in scripts/release/build.sh
+    # (single implementation: VERSION-derived gogio version
+    # MAJOR.MINOR.PATCH.CODE — a bare "1" is rejected as invalid
+    # semver, CI run 43290011677 — plus -trimpath/-buildvcs=false
+    # via GOFLAGS and the ClientVersion -X stamp). This entry point
+    # stays as the CI/dev facade and delegates.
+    echo "== Gio logic-build APK (gogio, via scripts/release/build.sh) =="
     mkdir -p "$ROOT/app/dist"
-    (cd "$ROOT/app" && gogio -target android -appid org.relavia.client \
-        -version 0.1.0.1 -tags "$GO_TAGS" -o dist/relavia-logic.apk ./cmd/relavia-android)
-    ls -l "$ROOT/app/dist/relavia-logic.apk"
-    sha256sum "$ROOT/app/dist/relavia-logic.apk"
+    "$ROOT/scripts/release/build.sh" gio "$ROOT/app/dist/relavia-logic.apk"
 }
 
 case "${1:-all}" in

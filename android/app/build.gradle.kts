@@ -3,6 +3,30 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Release version identity (Step 15): the repo-root VERSION file
+// is the single source of truth for every artifact. versionCode
+// follows the project encoding MAJOR*10000 + MINOR*100 + PATCH
+// (docs/relavia-update-v1.md §2 — the same value the Go client's
+// ClientVersionCode carries). Release builds may override both
+// via -PrelaviaVersionName / -PrelaviaVersionCode
+// (scripts/release/build.sh passes them from VERSION).
+val relaviaVersionFile = rootProject.file("../VERSION")
+val relaviaVersionRaw: String = if (relaviaVersionFile.exists()) {
+    relaviaVersionFile.readText().trim().removePrefix("v")
+} else {
+    "0.1.0"
+}
+val relaviaVersionParts: List<Int> =
+    relaviaVersionRaw.substringBefore("-").split(".").map { it.toIntOrNull() ?: 0 }
+val relaviaDerivedVersionCode: Int =
+    (relaviaVersionParts.getOrElse(0) { 0 } * 10000) +
+        (relaviaVersionParts.getOrElse(1) { 0 } * 100) +
+        (relaviaVersionParts.getOrElse(2) { 0 })
+val relaviaVersionName: String =
+    (findProperty("relaviaVersionName") as String?) ?: relaviaVersionRaw
+val relaviaVersionCode: Int =
+    (findProperty("relaviaVersionCode") as String?)?.toIntOrNull() ?: relaviaDerivedVersionCode
+
 android {
     namespace = "org.relavia.client"
     compileSdk = 34
@@ -13,8 +37,8 @@ android {
         applicationId = "org.relavia.client"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        versionCode = relaviaVersionCode
+        versionName = relaviaVersionName
     }
 
     buildTypes {
