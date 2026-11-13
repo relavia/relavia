@@ -38,7 +38,15 @@ GO_TAGS="with_quic with_utls with_wireguard with_gvisor"
 # They enable no protocol features; the feature set above is
 # Step 7's official set, unchanged.
 BIND_TAGS="$GO_TAGS badlinkname tfogo_checklinkname0"
-BIND_LDFLAGS="-checklinkname=0"
+# -s -w: strip the ELF symbol table and DWARF at link time. Without
+# them every libgojni.so carries full debug info (78-87 MB per ABI,
+# ~328 MB per AAR) and AGP's packaging pipeline cannot process the
+# binaries normally — CI run 43366009585 logged "Unable to strip the
+# following libraries" for libgojni.so and then failed in
+# :app:packageDebug's IncrementalSplitterRunnable. Stripped is the
+# standard release form for Go binaries; the Go runtime does not
+# need the ELF symtab (panic traces use gopclntab, which -s keeps).
+BIND_LDFLAGS="-s -w -checklinkname=0"
 # Toolchain pinned by sing-box v1.14.4's Makefile (lib_install).
 GOMOBILE_VERSION="v0.1.13"
 
@@ -97,7 +105,7 @@ build_shell() {
     # a shell APK without the data plane is not a producible
     # artifact (docs/libbox绑定.md §5).
     echo "== Kotlin VpnService shell + libbox AAR = merged APK (Gradle assembleDebug) =="
-    (cd "$ROOT/android" && gradle :app:assembleDebug --console=plain)
+    (cd "$ROOT/android" && gradle :app:assembleDebug --console=plain --stacktrace)
     local apk="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
     ls -l "$apk"
     sha256sum "$apk"
