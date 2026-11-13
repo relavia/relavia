@@ -42,6 +42,12 @@ object ShellRuntime {
                 val working = File(context.filesDir, "libbox").absolutePath
                 Libboxbind.setup(base, working, context.cacheDir.absolutePath)
                 Libboxbind.registerShellBridge(ShellBridgeImpl)
+                // OpenVPN 3 bridge: registers only when
+                // libovpn3android.so is really in the APK —
+                // otherwise the Go engine stays honestly
+                // unavailable (docs/openvpn3安卓接线.md).
+                Ovpn3BridgeImpl.appContext = context.applicationContext
+                Ovpn3BridgeImpl.registerIfAvailable()
                 GoBridge.markBound()
                 started = true
             } catch (e: UnsatisfiedLinkError) {

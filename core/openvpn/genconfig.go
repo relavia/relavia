@@ -89,6 +89,15 @@ type builtConfig struct {
 	// usesAuth is true when the session may ask for a
 	// username/password over the management interface.
 	usesAuth bool
+	// authRequired is true when the profile itself demands
+	// username/password authentication (an auth-user-pass
+	// directive survived rendering), whether or not the node
+	// carries credentials. Full-text mode only: structured
+	// mode emits auth-user-pass solely when a username is
+	// present, so there authRequired == usesAuth. Consumers
+	// without a management interface (OpenVPN 3) need this
+	// to refuse credential-less auth profiles up front.
+	authRequired bool
 }
 
 func firstToken(line string) string {
@@ -201,6 +210,7 @@ func buildPassthrough(n *specnode.Node, bo buildOptions) (*builtConfig, error) {
 	if !hasVerb {
 		out = append(out, "verb 3")
 	}
+	bc.authRequired = hasAuthUserPass
 	bc.usesAuth = hasAuthUserPass && n.OpenVPN.Username != ""
 	bc.text = strings.Join(out, "\n") + "\n"
 	return bc, nil

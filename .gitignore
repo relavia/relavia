@@ -16,3 +16,6 @@ go.work.sum
 .idea/
 .vscode/
 .DS_Store
+
+# OpenVPN 3 generated Java sources (android/openvpn3/build-openvpn3-android.sh)
+android/app/src/main/java/net/openvpn/ovpn3/
