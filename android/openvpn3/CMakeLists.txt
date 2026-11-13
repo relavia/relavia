@@ -67,6 +67,14 @@ set_source_files_properties(
 
 add_library(ovpn3android SHARED
   ${OPENVPN3_SRC}/client/ovpncli.cpp
+  # Upstream's own core build (cmake/findcoredeps.cmake,
+  # add_core_dependencies) compiles exactly one non-header core
+  # source into every client target: data_epoch.cpp, home of
+  # DataChannelEpoch / EpochDataChannelCryptoContext. Without
+  # it the Android link (lld, --no-undefined) fails on those
+  # symbols; the host spike never noticed because ELF shared
+  # libraries tolerate undefined symbols until called.
+  ${OPENVPN3_SRC}/openvpn/crypto/data_epoch.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/ovpncli_wrap.cpp
   ${OPENVPN3_SRC}/javacli/android/cpu.cpp
 )
