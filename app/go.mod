@@ -10,6 +10,8 @@ require (
 	openproxy/core v0.0.0
 )
 
+require github.com/sagernet/gomobile v0.1.13
+
 require (
 	filippo.io/age v1.3.1 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
