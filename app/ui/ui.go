@@ -65,6 +65,13 @@ type App struct {
 	fileEd                     widget.Editor
 	importBtn, urlBtn, fileBtn widget.Clickable
 
+	// VPN Gate source controls (Import tab sources section) and
+	// its risk-gate page state. showVPNGateRisk is touched only
+	// on the layout goroutine (click handlers run in layout).
+	vgRiskBtn, vgEnableBtn, vgRefreshBtn, vgRevokeBtn widget.Clickable
+	vgConfirmBtn, vgDeclineBtn                        widget.Clickable
+	showVPNGateRisk                                   bool
+
 	logList  widget.List
 	clearLog widget.Clickable
 
@@ -315,6 +322,12 @@ func ErrorKey(err error) string {
 		return "err.no_tested_node"
 	case errors.Is(err, service.ErrNoEngine):
 		return "err.platform_unavailable"
+	case errors.Is(err, service.ErrVPNGateConsentRequired):
+		return "err.vpngate_consent_required"
+	case errors.Is(err, service.ErrVPNGateFetchFailed):
+		return "err.vpngate_fetch_failed"
+	case errors.Is(err, service.ErrVPNGateNotAttached):
+		return "err.platform_unavailable"
 	}
 	switch kernel.KindOf(err) {
 	case kernel.KindPlatformUnavailable:
@@ -391,6 +404,9 @@ func (a *App) layoutTabs(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) layoutBody(gtx layout.Context) layout.Dimensions {
+	if a.showVPNGateRisk {
+		return a.layoutVPNGateRisk(gtx)
+	}
 	switch a.tab {
 	case tabImport:
 		return a.layoutImport(gtx)

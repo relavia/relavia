@@ -16,6 +16,8 @@ import (
 
 	"openproxy/core/kernel"
 	"openproxy/core/specnode"
+
+	"openproxy/plugins/vpngate"
 )
 
 // Sentinel service-level errors. The UI maps these (and kernel
@@ -33,6 +35,11 @@ type NodeView struct {
 	Record   NodeRecord
 	Weak     bool
 	Insecure bool
+	VPNGate  bool // from the VPN Gate public pool
+	// Admission is the recorded source admission level
+	// ("tcp-connect" / "handshake-verified" / "none"); empty
+	// for user-imported nodes.
+	Admission string
 }
 
 // LogBuffer is a bounded in-memory ring of diagnostic log lines
@@ -84,6 +91,14 @@ type Service struct {
 	httpClient *http.Client
 
 	mu sync.Mutex // serializes engine lifecycle operations
+
+	// VPN Gate pool source (vpngate.go). vgProber is the TCP
+	// admission prober used at refresh; nil means the plugin's
+	// default prober. It is a field (not a local) so tests can
+	// substitute a deterministic dialer.
+	vgMu     sync.Mutex
+	vg       *vpngate.Plugin
+	vgProber *vpngate.Prober
 }
 
 // New builds a Service. engine may be nil (UI can still manage
@@ -128,9 +143,11 @@ func (s *Service) Nodes(group string) []NodeView {
 			continue
 		}
 		out = append(out, NodeView{
-			Record:   rec,
-			Weak:     WeakEncryption(rec.Node),
-			Insecure: InsecureSkipVerify(rec.Node),
+			Record:    rec,
+			Weak:      WeakEncryption(rec.Node),
+			Insecure:  InsecureSkipVerify(rec.Node),
+			VPNGate:   IsVPNGateNode(rec.Node),
+			Admission: rec.Admission,
 		})
 	}
 	return out
@@ -145,7 +162,13 @@ func (s *Service) NodeByID(id string) (NodeView, bool) {
 	if !ok {
 		return NodeView{}, false
 	}
-	return NodeView{Record: rec, Weak: WeakEncryption(rec.Node), Insecure: InsecureSkipVerify(rec.Node)}, true
+	return NodeView{
+		Record:    rec,
+		Weak:      WeakEncryption(rec.Node),
+		Insecure:  InsecureSkipVerify(rec.Node),
+		VPNGate:   IsVPNGateNode(rec.Node),
+		Admission: rec.Admission,
+	}, true
 }
 
 // DeleteNode removes a node (and persists).
@@ -203,6 +226,12 @@ func (s *Service) TestNode(ctx context.Context, id string) (*kernel.HandshakeRes
 		lt.Error = string(res.Error.Kind)
 	}
 	s.store.SetLastTest(id, lt)
+	if res.OK && IsVPNGateNode(rec.Node) && rec.Node.Protocol == specnode.ProtocolOpenVPN {
+		// A real OpenVPN handshake through the app's dispatch
+		// is exactly the plugin's handshake-verified admission
+		// evidence — record it (refreshes never downgrade it).
+		s.store.SetAdmission(id, vpngate.ProbeLevelHandshakeVerified)
+	}
 	_ = s.store.Save()
 	return res, nil
 }

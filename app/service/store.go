@@ -34,6 +34,13 @@ type NodeRecord struct {
 	Node     *specnode.Node `json:"node"`
 	Warnings []string       `json:"warnings,omitempty"`
 	AddedAt  string         `json:"addedAt,omitempty"`
+	// Admission is the source-plugin admission level recorded
+	// for plugin-sourced nodes (plugins/vpngate levels:
+	// "tcp-connect", "handshake-verified", "none"). It is the
+	// level actually established for this node, never a claim:
+	// a node whose reachability probe failed keeps "none".
+	// Empty for user-imported nodes (no admission concept).
+	Admission string `json:"admission,omitempty"`
 }
 
 // SubscriptionRecord is the stored registration of one imported
@@ -67,6 +74,16 @@ type Settings struct {
 	UpdateSeenSeq       map[string]int64  `json:"updateSeenSeq,omitempty"`
 	UpdateSeenPublished map[string]string `json:"updateSeenPublished,omitempty"`
 	UpdateLastCheck     string            `json:"updateLastCheck,omitempty"`
+
+	// VPN Gate source bookkeeping (last refresh outcome, kept so
+	// the sources view can label freshness honestly across
+	// restarts; the plugin's own cache remains the data source).
+	// VPNGateLastRefresh is RFC 3339; VPNGateStale marks that the
+	// freshest refresh attempt failed and the nodes on display
+	// are the previous snapshot.
+	VPNGateLastRefresh string `json:"vpngateLastRefresh,omitempty"`
+	VPNGateStale       bool   `json:"vpngateStale,omitempty"`
+	VPNGateLastError   string `json:"vpngateLastError,omitempty"`
 }
 
 // Document is the on-disk store document.
@@ -357,6 +374,10 @@ func (s *Store) AddNode(n *specnode.Node, warnings []string) {
 	for i := range s.doc.Nodes {
 		if s.doc.Nodes[i].Node.ID == n.ID {
 			rec.AddedAt = s.doc.Nodes[i].AddedAt
+			// Preserve the recorded admission level across
+			// re-import; re-establishing it is the source
+			// layer's job (probes / handshake tests).
+			rec.Admission = s.doc.Nodes[i].Admission
 			// Preserve the freshest handshake result across re-import.
 			if rec.Node.LastTest == nil {
 				rec.Node.LastTest = s.doc.Nodes[i].Node.LastTest
@@ -410,6 +431,20 @@ func (s *Store) NodeByID(id string) (NodeRecord, bool) {
 		}
 	}
 	return NodeRecord{}, false
+}
+
+// SetAdmission records the source-plugin admission level
+// established for a node (see NodeRecord.Admission).
+func (s *Store) SetAdmission(id string, level string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.doc.Nodes {
+		if s.doc.Nodes[i].Node.ID == id {
+			s.doc.Nodes[i].Admission = level
+			return true
+		}
+	}
+	return false
 }
 
 // SetLastTest records a handshake outcome on the node (book 5.2

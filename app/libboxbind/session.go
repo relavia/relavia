@@ -85,12 +85,20 @@ func (s *appSession) ensureBuiltLocked() error {
 	// closure reads svc at call time because the engine is
 	// constructed before the service that consumes its logs.
 	var svc *service.Service
-	engine := service.NewSingBoxEngine(func(level, message string) {
+	logSink := func(level, message string) {
 		if svc != nil {
 			svc.OnKernelLog(level, message)
 		}
-	})
+	}
+	// Protocol dispatch mirrors cmd/relavia-android, including
+	// the honestly-unavailable Android OpenVPN slot, plus the
+	// VPN Gate pool source.
+	engine := service.NewDispatchEngine(
+		service.NewSingBoxEngine(logSink),
+		service.NewAndroidOpenVPNEngine(),
+	)
 	svc = service.New(store, engine)
+	service.AttachVPNGateDefault(svc, storePath)
 
 	lang := store.Settings().Language
 	if lang == "" {

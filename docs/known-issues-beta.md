@@ -24,13 +24,30 @@ W-1 系统代理实际生效、W-2 托盘行为、W-3 CJK 字体渲染、W-4 端
 或服务层验证，无一在 Windows 实机签收。来源：docs/step9-Windows
 客户端MVP.md §5、docs/阶段1-汇总验收.md §4；归属：真机清单。
 
-### KI-03 VPN Gate 节点在应用内尚不可连接
-桌面 OpenVPN 独立进程适配器已就绪（本地自起服务端真实握手通过、
-错证书被准确分类），但 app 服务层按协议分发的接线未完成（设计见
-docs/openvpn进程适配.md §7）；且连接真实 VPN Gate 服务器的公网
-握手（L5）未验。当前准入等级维持 parse + tcp-connect，界面标注
-「可导入 / 可测活 / 不可连接」不变。来源：docs/step14-VPNGate
-来源插件.md、docs/openvpn进程适配.md §7；归属：OpenVPN 接线后续步。
+### KI-03 VPN Gate 节点池接线（代码侧完成，残余为实证项）
+代码侧接线完成：① 插件已注册为 app 正式节点来源——导入页
+「节点来源」区可见 VPN Gate 条目，启用必须过插件既有同意状态
+机（风险文案 risk.vpngate.* 三语键，UI 只呈现与确认，无绕过）；
+刷新经插件 Fetcher 拉官方名单入 Store（来源标注
+kind=plugin/ref=vpngate + 国家分组），失败如实报错、保留旧名单
+并标注陈旧；撤回同意按插件语义清缓存并移除池节点。② 服务层
+协议分发已落地（docs/openvpn进程适配.md §7 第 3 项）：sing-box
+九族走 singbox 适配器、openvpn 节点走进程适配器，分发路由有
+单测（假适配器断言 + 未知协议显式拒绝）；桌面端池节点可连接
+（OpenVPN 二进制缺失时按适配器诚实契约报错）。③ 节点行带
+「VPN Gate · 志愿者」标注与准入等级（tcp-connect /
+handshake-verified 按实情记录：刷新时 TCP 探测定级、应用内
+真实握手测活成功后升级、刷新不降级）；选中池节点时展示
+risk.vpngate.node_line 风险行。④ app 路径真实刷新已实测
+（沙箱内经官方 HTTP 端点：98 节点 / 6 国家分组入 Store）。
+残余项（均为实证而非接线）：VPN Gate 公网实握（L5）未验——
+与真实池节点的完整 OpenVPN 会话尚无公网证据，准入等级在
+公网实握通过前不得对外宣称为已验证可连；Android 端不可
+连接（进程路线在 Android 不可行，池节点可导入可测活，连接
+按钮禁用并给诚实原因；后续路线为 OpenVPN 3 库评估）；真机
+未验（池子全流程未在真实设备/桌面走过）。来源：
+docs/step14-VPNGate来源插件.md、docs/openvpn进程适配.md
+§6/§7；归属：公网实握与真机验收（Step 20 门）。
 
 ### KI-04 本地存储口令界面未接线（默认无口令模式）
 加密存储数据层已就绪（Argon2id 派生 + XChaCha20-Poly1305，备份

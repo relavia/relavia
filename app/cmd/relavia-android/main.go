@@ -72,12 +72,21 @@ func run() error {
 	}
 
 	var svc *service.Service
-	engine := service.NewSingBoxEngine(func(level, message string) {
+	logSink := func(level, message string) {
 		if svc != nil {
 			svc.OnKernelLog(level, message)
 		}
-	})
+	}
+	// Protocol dispatch with the Android OpenVPN slot: the
+	// process adapter cannot run on Android, so OpenVPN nodes
+	// (incl. the VPN Gate pool) stay importable/probeable and
+	// connects fail honestly (see service.NewAndroidOpenVPNEngine).
+	engine := service.NewDispatchEngine(
+		service.NewSingBoxEngine(logSink),
+		service.NewAndroidOpenVPNEngine(),
+	)
 	svc = service.New(store, engine)
+	service.AttachVPNGateDefault(svc, storePath)
 
 	initialLang := store.Settings().Language
 	if initialLang == "" {

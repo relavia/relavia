@@ -55,6 +55,13 @@ func (a *App) layoutActions(gtx layout.Context) layout.Dimensions {
 		children := []layout.FlexChild{}
 		if running {
 			children = append(children, layout.Rigid(material.Button(a.th, &a.disconnectBtn, a.T("conn.disconnect", nil)).Layout))
+		} else if _, unconnectable := a.selectedUnconnectable(); unconnectable {
+			// The selected node's protocol family has no
+			// connectable engine in this build (e.g. OpenVPN
+			// pool nodes on Android, where the process adapter
+			// cannot run): no connect button, an honest reason
+			// instead. Import and testing stay available.
+			children = append(children, layout.Rigid(material.Body2(a.th, a.T("node.openvpn_connect_unavailable", nil)).Layout))
 		} else {
 			children = append(children, layout.Rigid(material.Button(a.th, &a.connectBtn, a.T("conn.connect", nil)).Layout))
 		}
@@ -94,6 +101,11 @@ func (a *App) layoutRiskBanners(gtx layout.Context) layout.Dimensions {
 	if view.Insecure {
 		keys = append(keys, "risk.insecure_skip_verify")
 	}
+	if view.VPNGate {
+		// Book 7.3: pool nodes always carry their per-node
+		// risk line while selected.
+		keys = append(keys, "risk.vpngate.node_line")
+	}
 	if len(keys) == 0 {
 		return layout.Dimensions{}
 	}
@@ -106,6 +118,24 @@ func (a *App) layoutRiskBanners(gtx layout.Context) layout.Dimensions {
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 		})
+}
+
+// selectedUnconnectable returns the selected node view when a
+// node is selected whose protocol family this build cannot
+// connect (service.CanConnect is false for it).
+func (a *App) selectedUnconnectable() (service.NodeView, bool) {
+	id := a.svc.SelectedNodeID()
+	if id == "" {
+		return service.NodeView{}, false
+	}
+	view, ok := a.svc.NodeByID(id)
+	if !ok {
+		return service.NodeView{}, false
+	}
+	if a.svc.CanConnect(view.Record.Node.Protocol) {
+		return service.NodeView{}, false
+	}
+	return view, true
 }
 
 func (a *App) layoutNodeList(gtx layout.Context) layout.Dimensions {
@@ -183,6 +213,17 @@ func nodeSubtitle(a *App, view service.NodeView) string {
 	if view.Insecure {
 		s += " · ⚠ " + a.T("node.insecure_badge", nil)
 	}
+	if view.VPNGate {
+		s += " · " + a.T("source.vpngate.badge", nil)
+		switch view.Admission {
+		case service.AdmissionHandshakeVerified:
+			s += " · " + a.T("source.vpngate.level_handshake", nil)
+		case service.AdmissionTCPConnect:
+			s += " · " + a.T("source.vpngate.level_tcp", nil)
+		default:
+			s += " · " + a.T("source.vpngate.level_none", nil)
+		}
+	}
 	return s
 }
 
@@ -226,6 +267,133 @@ func (a *App) layoutImport(gtx layout.Context) layout.Dimensions {
 					return material.Body1(a.th, result).Layout(gtx)
 				}),
 				layout.Rigid(material.Caption(a.th, a.T("warn.weak_auto_note", nil)).Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				layout.Rigid(a.layoutSources),
+			)
+		})
+}
+
+// --- Sources section (Import tab) -------------------------------------
+
+// layoutSources lists the built-in node sources. VPN Gate is
+// the first (book 7): a source plugin with a hard risk gate —
+// this view only presents state and forwards the user's
+// confirm/enable/refresh/revoke actions to the service; the
+// consent state machine itself lives in the plugin and is not
+// re-implemented here.
+func (a *App) layoutSources(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(material.H6(a.th, a.T("source.title", nil)).Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(a.layoutVPNGateSource),
+	)
+}
+
+func (a *App) layoutVPNGateSource(gtx layout.Context) layout.Dimensions {
+	st := a.svc.VPNGateStatus()
+	// Click handling during layout, like the node rows.
+	if a.vgRiskBtn.Clicked(gtx) {
+		a.showVPNGateRisk = true
+	}
+	if a.vgEnableBtn.Clicked(gtx) {
+		a.runAsync(func(ctx context.Context) error { return a.svc.EnableVPNGate() })
+	}
+	if a.vgRefreshBtn.Clicked(gtx) {
+		a.runAsync(func(ctx context.Context) error {
+			_, err := a.svc.RefreshVPNGate(ctx, true)
+			return err
+		})
+	}
+	if a.vgRevokeBtn.Clicked(gtx) {
+		a.runAsync(func(ctx context.Context) error { return a.svc.DisableVPNGate() })
+	}
+	children := []layout.FlexChild{
+		layout.Rigid(material.Body1(a.th, a.T("source.vpngate.name", nil)).Layout),
+		layout.Rigid(material.Caption(a.th, a.T("source.vpngate.desc", nil)).Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+	}
+	switch {
+	case !st.Attached:
+		children = append(children,
+			layout.Rigid(material.Caption(a.th, a.T("source.vpngate.unavailable", nil)).Layout))
+	case st.ConsentState != service.VPNGateConsentAcknowledged:
+		children = append(children,
+			layout.Rigid(material.Body2(a.th, a.T("source.vpngate.consent_required", nil)).Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+			layout.Rigid(material.Button(a.th, &a.vgRiskBtn, a.T("source.vpngate.view_risk", nil)).Layout),
+		)
+	case !st.Enabled:
+		children = append(children,
+			layout.Rigid(material.Button(a.th, &a.vgEnableBtn, a.T("source.vpngate.enable", nil)).Layout),
+		)
+	default:
+		if st.NodeCount == 0 {
+			children = append(children,
+				layout.Rigid(material.Body2(a.th, a.T("source.vpngate.status_never", nil)).Layout))
+		} else {
+			t := st.LastRefresh.Local()
+			ts := fmt.Sprintf("%04d-%02d-%02d %02d:%02d",
+				t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute())
+			children = append(children,
+				layout.Rigid(material.Body2(a.th, a.T("source.vpngate.status", map[string]string{
+					"count": fmt.Sprint(st.NodeCount), "time": ts,
+				})).Layout))
+		}
+		if st.Stale {
+			children = append(children,
+				layout.Rigid(material.Caption(a.th, a.T("source.vpngate.stale", nil)).Layout))
+		}
+		children = append(children,
+			layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(material.Button(a.th, &a.vgRefreshBtn, a.T("source.vpngate.refresh", nil)).Layout),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+					layout.Rigid(material.Button(a.th, &a.vgRevokeBtn, a.T("risk.vpngate.revoke", nil)).Layout),
+				)
+			}),
+		)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+// layoutVPNGateRisk is the book 7.3 risk gate page: the full
+// disclosure text (the packs' risk.vpngate.body, hand-
+// translated in every shipped language) with confirm/decline.
+// Confirming is the only path that records the plugin's
+// consent acknowledgement; the service then enables the source
+// and runs the first refresh.
+func (a *App) layoutVPNGateRisk(gtx layout.Context) layout.Dimensions {
+	if a.vgDeclineBtn.Clicked(gtx) {
+		a.showVPNGateRisk = false
+	}
+	if a.vgConfirmBtn.Clicked(gtx) {
+		a.showVPNGateRisk = false
+		a.runAsync(func(ctx context.Context) error {
+			if err := a.svc.AcknowledgeVPNGateRisk(); err != nil {
+				return err
+			}
+			if err := a.svc.EnableVPNGate(); err != nil {
+				return err
+			}
+			_, err := a.svc.RefreshVPNGate(ctx, true)
+			return err
+		})
+	}
+	return layout.Inset{Left: unit.Dp(14), Right: unit.Dp(14), Top: unit.Dp(8)}.Layout(gtx,
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(material.H6(a.th, a.T("risk.vpngate.title", nil)).Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+				layout.Rigid(material.Body2(a.th, a.T("risk.vpngate.body", nil)).Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(material.Button(a.th, &a.vgConfirmBtn, a.T("risk.vpngate.confirm", nil)).Layout),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(material.Button(a.th, &a.vgDeclineBtn, a.T("risk.vpngate.decline", nil)).Layout),
+					)
+				}),
 			)
 		})
 }

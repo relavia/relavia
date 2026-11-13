@@ -49,12 +49,20 @@ func run() error {
 	// The engine's log sink needs the service, and the service
 	// needs the engine; bind the sink through a late reference.
 	var svc *service.Service
-	engine := service.NewSingBoxEngine(func(level, message string) {
+	logSink := func(level, message string) {
 		if svc != nil {
 			svc.OnKernelLog(level, message)
 		}
-	})
+	}
+	// Protocol dispatch: sing-box families to the sing-box
+	// adapter, OpenVPN nodes (incl. the VPN Gate pool) to the
+	// independent-process adapter.
+	engine := service.NewDispatchEngine(
+		service.NewSingBoxEngine(logSink),
+		service.NewOpenVPNEngine(logSink),
+	)
 	svc = service.New(store, engine)
+	service.AttachVPNGateDefault(svc, storePath)
 
 	initialLang := store.Settings().Language
 	if initialLang == "" {
