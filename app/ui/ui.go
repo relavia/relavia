@@ -145,8 +145,19 @@ type App struct {
 
 	// mu guards the fields written by action goroutines and read
 	// during layout (busy, errKey, importResult, traffic).
-	mu           sync.Mutex
-	busy         bool
+	mu   sync.Mutex
+	busy bool
+	// rowChecks tracks per-node fast checks in flight. They
+	// deliberately do NOT go through the busy gate (2026-11-14
+	// timing audit §8): runAsync drops a tap silently while
+	// busy, so during a long check-all sweep or a connect
+	// chain every per-row "check latency" tap vanished with
+	// no feedback at all — the device report "checking again
+	// does nothing". A fast check is internally synchronized
+	// and touches only its own node's result, so it is safe
+	// to run alongside a gated operation; this set only
+	// de-duplicates repeated taps on the SAME row.
+	rowChecks    map[string]bool
 	errKey       string // i18n key of the last error, "" when none
 	importResult string
 	// importFailKey is the pack key of the first failed item's
@@ -556,6 +567,42 @@ func (a *App) runAsync(op string, fn func(ctx context.Context) error) {
 		}
 		a.mu.Unlock()
 		a.invalidate()
+	}()
+}
+
+// runRowCheck runs ONE node's fast reachability check
+// outside the busy gate (see the rowChecks field note): the
+// row's own sub-line is the feedback, so a tap during a
+// check-all sweep or a connect chain still visibly does
+// something. The probe is not registered as a cancellable
+// service op — Disconnect must not kill a 3-second latency
+// probe, and the probe must never hold up Disconnect. A
+// no-response outcome is recorded by the service itself
+// (CheckNodeFast logs it with its reason); any other error
+// goes through the same failure-log chain as runAsync.
+func (a *App) runRowCheck(id string) {
+	a.mu.Lock()
+	if a.rowChecks == nil {
+		a.rowChecks = map[string]bool{}
+	}
+	if a.rowChecks[id] {
+		a.mu.Unlock()
+		return
+	}
+	a.rowChecks[id] = true
+	a.mu.Unlock()
+	go func() {
+		defer func() {
+			a.mu.Lock()
+			delete(a.rowChecks, id)
+			a.mu.Unlock()
+			a.invalidate()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if _, err := a.svc.CheckNodeFast(ctx, id); err != nil {
+			a.svc.LogFailure("check-node", err)
+		}
 	}()
 }
 

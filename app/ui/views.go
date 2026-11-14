@@ -796,16 +796,16 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 		a.runAsync("connect", func(ctx context.Context) error { return a.svc.Connect(ctx, id) })
 	}
 	if btns.testBtn.Clicked(gtx) {
-		id := n.ID
-		a.runAsync("check-node", func(ctx context.Context) error {
-			// "Check latency" is the FAST reachability check
-			// (2026-11-14 fix batch): a full handshake per
-			// tap is what made checking pool nodes unusable.
-			// The result (latency / no response) lands on the
-			// row's sub-line.
-			_, err := a.svc.CheckNodeFast(ctx, id)
-			return err
-		})
+		// "Check latency" is the FAST reachability check
+		// (2026-11-14 fix batch): a full handshake per tap
+		// is what made checking pool nodes unusable. It runs
+		// through runRowCheck, NOT the busy-gated runAsync
+		// (2026-11-14 timing audit §8): while a sweep or a
+		// connect chain held the gate, these taps were
+		// dropped silently and the row looked dead. The
+		// result (latency / no response) lands on the row's
+		// sub-line either way.
+		a.runRowCheck(n.ID)
 	}
 	if btns.delBtn.Clicked(gtx) {
 		a.svc.DeleteNode(n.ID)

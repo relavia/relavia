@@ -35,6 +35,11 @@ type fakeOvpn3Bridge struct {
 	password string
 	starts   int
 	stops    int
+	// holdDisc suppresses the DISCONNECTED a real core
+	// emits asynchronously while it unwinds, so a test can
+	// observe the engine's unwind gate holding and then
+	// release the event by hand (releaseDisc).
+	holdDisc bool
 }
 
 func (f *fakeOvpn3Bridge) StartOvpn3Session(profile, username, password string) error {
@@ -48,8 +53,16 @@ func (f *fakeOvpn3Bridge) StartOvpn3Session(profile, username, password string) 
 
 func (f *fakeOvpn3Bridge) StopOvpn3Session() error {
 	f.stops++
-	NotifyOvpn3Event("DISCONNECTED", "fake core event", false)
+	if !f.holdDisc {
+		NotifyOvpn3Event("DISCONNECTED", "fake core event", false)
+	}
 	return nil
+}
+
+// releaseDisc delivers the DISCONNECTED the fake core was
+// holding back (see holdDisc).
+func (f *fakeOvpn3Bridge) releaseDisc() {
+	NotifyOvpn3Event("DISCONNECTED", "fake core event", false)
 }
 
 // fakeConsentBinder implements platform.VPNBinder with a
@@ -259,6 +272,98 @@ func TestOvpn3EngineStartCanceled(t *testing.T) {
 	if bridge.stops != 1 {
 		t.Errorf("native stops = %d, want 1 (cancel must stop the core)", bridge.stops)
 	}
+}
+
+// TestOvpn3EngineUnwindGate is the 2026-11-14 timing audit's
+// sequencing invariant (§8): a native session whose core has
+// been told to stop but has NOT yet reported DISCONNECTED
+// still owns the single-slot native controller, so the next
+// start must not launch a second core session until the
+// DISCONNECTED lands (or the caller cancels the wait).
+// Without the gate, a fast retry — the one-tap chain's exact
+// shape — could let the old session's teardown (client-slot
+// clear, service stop) land on the new session.
+func TestOvpn3EngineUnwindGate(t *testing.T) {
+	withConsent(t, true)
+	bridge := &fakeOvpn3Bridge{script: "", holdDisc: true}
+	withBridge(t, bridge)
+	e := newOvpn3Engine(nil)
+	e.connectTimeout = 120 * time.Millisecond
+	e.unwindWait = 10 * time.Second // the gate, not the bound, must be what releases start #2
+
+	// Session #1: silent core, times out; the engine stops
+	// the core but the core's DISCONNECTED is still held.
+	if err := e.StartNode(context.Background(), ovpn3Node(), kernel.PlatformOptions{}); err == nil {
+		t.Fatal("session #1 succeeded against a silent core")
+	}
+	if bridge.starts != 1 || bridge.stops != 1 {
+		t.Fatalf("after #1: starts=%d stops=%d, want 1/1", bridge.starts, bridge.stops)
+	}
+
+	// Start #2 must wait at the gate while #1 unwinds.
+	bridge.script = "CONNECTED"
+	done := make(chan error, 1)
+	go func() { done <- e.StartNode(context.Background(), ovpn3Node(), kernel.PlatformOptions{}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("start #2 completed (%v) before the previous session's DISCONNECTED", err)
+	case <-time.After(400 * time.Millisecond):
+	}
+	if bridge.starts != 1 {
+		t.Fatalf("native starts = %d while the previous session was still unwinding, want 1", bridge.starts)
+	}
+
+	// DISCONNECTED for #1 lands: #2 launches and connects.
+	bridge.releaseDisc()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("start #2 after unwind: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("start #2 never launched after the previous session's DISCONNECTED")
+	}
+	if bridge.starts != 2 {
+		t.Fatalf("native starts = %d, want 2", bridge.starts)
+	}
+	if err := e.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	bridge.releaseDisc() // let the engine observe the final unwind
+}
+
+// TestOvpn3EngineUnwindGateCancel covers the gate's other
+// exit: canceling the caller while it waits for the previous
+// session to unwind must abort the start as canceled and
+// launch nothing.
+func TestOvpn3EngineUnwindGateCancel(t *testing.T) {
+	withConsent(t, true)
+	bridge := &fakeOvpn3Bridge{script: "", holdDisc: true}
+	withBridge(t, bridge)
+	e := newOvpn3Engine(nil)
+	e.connectTimeout = 120 * time.Millisecond
+	e.unwindWait = 10 * time.Second
+
+	if err := e.StartNode(context.Background(), ovpn3Node(), kernel.PlatformOptions{}); err == nil {
+		t.Fatal("session #1 succeeded against a silent core")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- e.StartNode(ctx, ovpn3Node(), kernel.PlatformOptions{}) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if k := kernel.KindOf(err); k != kernel.KindCanceled {
+			t.Fatalf("gated start kind = %q, want canceled (err %v)", k, err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancel did not release the gated start")
+	}
+	if bridge.starts != 1 {
+		t.Fatalf("native starts = %d, want 1 (the canceled start must launch nothing)", bridge.starts)
+	}
+	bridge.releaseDisc()
 }
 
 func TestOvpn3EngineStartTimeout(t *testing.T) {

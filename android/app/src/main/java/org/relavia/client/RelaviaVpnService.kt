@@ -136,6 +136,17 @@ class RelaviaVpnService : VpnService(), Ovpn3TunHost {
                 stopTunnelLocal()
                 return@Thread
             }
+            // Defensive (2026-11-14 timing audit §8): if a
+            // previous session's core is somehow still
+            // installed — its stop is asynchronous — ask it
+            // to stop before the new client takes the slot.
+            // The Go engine also gates new starts on the
+            // previous session's DISCONNECTED; this is the
+            // native-side backstop so two cores never share
+            // the controller unnoticed.
+            if (Ovpn3SessionController.client != null) {
+                Ovpn3SessionController.requestStop()
+            }
             val client = Ovpn3Client(this)
             Ovpn3SessionController.client = client
             val stats = Thread {
@@ -165,8 +176,23 @@ class RelaviaVpnService : VpnService(), Ovpn3TunHost {
             } catch (e: Exception) {
                 Libboxbind.notifyOvpn3Event("CONNECTION_FAILED", e.message ?: "core error", true)
             } finally {
-                Ovpn3SessionController.client = null
-                stopTunnelLocal()
+                // Identity guard (2026-11-14 timing audit
+                // §8): only the session that still owns the
+                // controller slot may clear it and stop the
+                // service. If a newer session took the slot
+                // while this core was still unwinding,
+                // clearing here would orphan the new client
+                // (no stop path, no stats), and
+                // stopTunnelLocal() — stopSelf() — would
+                // destroy the host the new session's
+                // protect()/establish() callbacks and its
+                // foreground lifetime depend on, mid-flight.
+                // (The stats loop above already keys off the
+                // same identity check.)
+                if (Ovpn3SessionController.client === client) {
+                    Ovpn3SessionController.client = null
+                    stopTunnelLocal()
+                }
             }
         }.start()
     }

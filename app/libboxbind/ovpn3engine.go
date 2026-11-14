@@ -51,7 +51,32 @@ type ovpn3Engine struct {
 	waiter    chan ovpn3Outcome
 	startedAt time.Time
 	up, down  uint64
+
+	// nativeLive tracks the most recently LAUNCHED native
+	// session: non-nil (open) from a successful
+	// StartOvpn3Session until the core's DISCONNECTED for
+	// that session closes it. A subsequent start waits on it
+	// (bounded by unwindWait) before launching, so a new
+	// core session never overlaps the previous session's
+	// unwind inside the single-slot native session
+	// controller (2026-11-14 timing audit, docs/真机连接
+	// 失败诊断-2026-11-14.md §8): the native stop is
+	// fire-and-forget, and without this gate a fast retry —
+	// exactly the one-tap chain's shape — could install a
+	// new session while the old core was still tearing
+	// down, letting the old session's cleanup (client-slot
+	// clear, service stop) land on the new session.
+	nativeLive chan struct{}
+	// unwindWait bounds the gate above; a field so tests
+	// can stretch/shrink it. Zero means defaultUnwindWait.
+	unwindWait time.Duration
 }
+
+// defaultUnwindWait bounds how long a start waits for the
+// previous native session's DISCONNECTED before proceeding
+// anyway: a core that never reports its own teardown must
+// not wedge every later connect behind it.
+const defaultUnwindWait = 3 * time.Second
 
 type ovpn3Outcome struct {
 	err error // nil on CONNECTED
@@ -129,6 +154,37 @@ func (e *ovpn3Engine) start(ctx context.Context, n *specnode.Node) error {
 		return err
 	}
 
+	// Native-unwind gate (2026-11-14 timing audit §8): if
+	// the previous native session was launched but its
+	// DISCONNECTED has not been observed yet, wait for it
+	// (bounded) BEFORE claiming Starting or touching
+	// consent — a late DISCONNECTED consumed here can only
+	// belong to the dead session, never to the one about
+	// to launch, and the new core never starts while the
+	// old one is still unwinding in the shared native
+	// controller. The wait honors the caller's context.
+	e.mu.Lock()
+	prevLive := e.nativeLive
+	e.mu.Unlock()
+	if prevLive != nil {
+		wait := e.unwindWait
+		if wait <= 0 {
+			wait = defaultUnwindWait
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-prevLive:
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			kerr := kernel.NewError(kernel.KindCanceled, "Start",
+				"the start was canceled while waiting for the previous session to unwind", ctx.Err())
+			e.setFailed(kerr)
+			return kerr
+		}
+		timer.Stop()
+	}
+
 	e.mu.Lock()
 	if e.state == kernel.StateRunning || e.state == kernel.StateStarting {
 		e.mu.Unlock()
@@ -187,6 +243,13 @@ func (e *ovpn3Engine) start(ctx context.Context, n *specnode.Node) error {
 		e.setFailed(kerr)
 		return kerr
 	}
+	// The native session is launched: track it for the
+	// unwind gate until its DISCONNECTED closes the channel
+	// (onNativeEvent). Installed before the CONNECTED wait
+	// so every exit path of this session is covered.
+	e.mu.Lock()
+	e.nativeLive = make(chan struct{})
+	e.mu.Unlock()
 
 	bound := e.connectTimeout
 	if bound <= 0 {
@@ -377,6 +440,12 @@ func (e *ovpn3Engine) onNativeEvent(name, info string, fatal bool) {
 			e.state = kernel.StateIdle
 			e.since = time.Now()
 			e.activeID = ""
+		}
+		// The native session this DISCONNECTED belongs to
+		// has fully unwound: release the next start's gate.
+		if e.nativeLive != nil {
+			close(e.nativeLive)
+			e.nativeLive = nil
 		}
 		e.mu.Unlock()
 		if w != nil {
