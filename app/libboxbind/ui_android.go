@@ -39,7 +39,6 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/op"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
@@ -83,7 +82,7 @@ func runProductUI() {
 	}
 
 	th := material.NewTheme()
-	th.Shaper = text.NewShaper(text.WithCollection(ui.FontCollection()))
+	th.Shaper = ui.NewShaper()
 
 	shell := ui.New(svc, tr, th)
 	shell.Tray = platform.NewTray(platform.TrayEvents{})

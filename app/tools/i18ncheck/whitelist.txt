@@ -10,10 +10,27 @@ all
 %.1f %ciB
 # stderr diagnostic prefix of the CLI entry point; not UI copy.
 relavia:
-# Diagnostic startup log line (log stream is diagnostic-grade:
-# the kernel itself logs in English; this line only ever appears
-# in the local log view, never as UI copy).
-fonts: no CJK font found on this machine; Chinese text may render as boxes until a CJK font (e.g. Microsoft YaHei / Noto Sans CJK) is installed
+# Diagnostic startup log lines (log stream is diagnostic-grade:
+# the kernel itself logs in English; these lines only ever
+# appear in the local log view, never as UI copy). The %s is the
+# bundled-face summary from ui.BundledCJKDescription (region and
+# weight tokens of the embedded Noto Sans CJK, proper nouns).
+fonts: bundled font collection active (%s); no system fonts are used
+# (same: diagnostic startup log line, the parse-failure branch)
+fonts: WARNING bundled CJK font failed to parse; CJK text may render as boxes
+# Font family+region identifiers matched against the parsed
+# name tables of the embedded Noto Sans CJK collections
+# (ui.regionRank); proper nouns used as lookup keys, never
+# rendered as UI copy.
+Noto Sans CJK SC
+# (same: font region identifier)
+Noto Sans CJK TC
+# (same: font region identifier)
+Noto Sans CJK HK
+# (same: font region identifier)
+Noto Sans CJK JP
+# (same: font region identifier)
+Noto Sans CJK KR
 # Tray menu item IDs (internal identifiers dispatched in a
 # switch; the rendered labels come from tray.* pack entries).
 show

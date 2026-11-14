@@ -18,7 +18,6 @@ import (
 	"gioui.org/app"
 	"gioui.org/io/system"
 	"gioui.org/op"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
@@ -74,9 +73,11 @@ func run() error {
 	}
 
 	th := material.NewTheme()
-	th.Shaper = text.NewShaper(text.WithCollection(ui.FontCollection()))
-	if !ui.FoundCJK() {
-		svc.Logs().Add("fonts: no CJK font found on this machine; Chinese text may render as boxes until a CJK font (e.g. Microsoft YaHei / Noto Sans CJK) is installed")
+	th.Shaper = ui.NewShaper()
+	if desc := ui.BundledCJKDescription(); desc != "" {
+		svc.Logs().Add(fmt.Sprintf("fonts: bundled font collection active (%s); no system fonts are used", desc))
+	} else {
+		svc.Logs().Add("fonts: WARNING bundled CJK font failed to parse; CJK text may render as boxes")
 	}
 
 	w := new(app.Window)

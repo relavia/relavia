@@ -142,7 +142,7 @@ OpenVPN 槽位维持 NewAndroidOpenVPNEngine（诚实不可用）：
   出现之前就绪；仅为服务被拉起的进程里，循环阻塞在窗口
   事件上空转等待，成本可忽略。
 - 装配复用会话：ensureBuiltLocked 拿到（svc, tr）后以桌面
-  同款方式建 material 主题（ui.FontCollection 字体集）与
+  同款方式建 material 主题（ui.NewShaper 字体集，见 §11.5）与
   ui.App，外加 1 秒刷新 ticker（与桌面/逻辑构建入口一致）。
 - 窗口重建：DestroyEvent 只结束当前窗口不结束循环——安卓
   进程常比 Activity 活得久（前台服务保活），同进程内再次
@@ -381,3 +381,17 @@ ImportReport 本就携带逐项 Failed{Index, Code, Detail}，只是界面没展
 12 场景与 v3 图逐项对照：首屏新用户（浅/深蓝）、风险弹层、回访未连（浅）、最快（深蓝）、节点列表 + 溢出菜单展开、导入（浅/深蓝、方式行展开态）、设置（浅/深蓝/跟随系统回落）、已连接。对照中发现并修复的真实缺陷：Gio Stack 的 Expanded 填充只按 Stacked 子级尺寸绘制（外层 Min 只抬布局盒不抬漆面）——英雄按钮、普通按钮、分组 chip、分段页签曾普遍「盒高对、漆面矮」，统一改为由 Stacked 子级自带目标尺寸；断开按钮文字贴顶（Stacked 内容加 Center）；风险行链接被挤换行（短提醒改 Flexed 截断）；风险弹层被 Flexed 列表撑满高（改高度封顶、面板贴合内容）；已连接节点误入「为你选好」（排除）。
 仍未验：真机复测（本批以帧验 + 既有真机缺陷为据，真机回归待用户）。
 接线补记（2026-11-14）：安卓端教程入口的外链打开已接线——platform.OpenURL 在 Android 构建下经平台注册表（URLBinder，openurl_bridge.go）委托 ShellBridge.OpenURL，壳侧（ShellBridgeImpl）以 ACTION_VIEW Intent 打开；Go 侧先行校验（仅允许 https，空值/非 https 在过桥前拒绝，错误经既有失败链落日志并给人话提示），桥未注册或系统无浏览器时仍如实返回不支持、落日志、人话提示，不假装打开。验收点：Go 假桥三例（已注册转发 / 未注册降级 / 非 https 拒绝）与 libboxbind 桥接线测试全过；Kotlin 以手工等价流水线对 gobind 真实再生成门面编译零错误（生成门面 ShellBridge 新增 openURL(String)，与壳实现逐字对上）；真实 Gradle/APK 构建归 CI 的 android 作业，真机点击打开浏览器归用户真机复测——未验，不得宣称已通。
+
+### 11.5 字体口径（2026-11-14，KI-21：安卓中文豆腐修复）
+
+**口径（此后唯一字体来源）**：UI 字体只来自应用内嵌字体——Go 字体（拉丁）+ 内嵌 Noto Sans CJK（`app/ui/fontdata/NotoSansCJK-Regular.ttc` / `-Bold.ttc`，SIL OFL 1.1，声明见 THIRD_PARTY_NOTICES.md 第 18 行，许可证全文 `docs/licenses/OFL-1.1.txt`）。`ui.FontCollection()` 返回这套集合；三个入口（桌面 `cmd/relavia`、逻辑构建 `cmd/relavia-android`、产品界面 `libboxbind`）一律经 `ui.NewShaper()` 建 shaper，该构造同时带 `text.NoSystemFonts()`。**禁止**再从操作系统字体目录加载字体，**禁止**在任何入口直接 `text.NewShaper(...)`（会重新打开系统字体扫描）。
+
+**根因（代码定位，真机发现）**：用户实测 v4 包：切简体/繁體后全部中文字符为方框、英文数字正常。两层原因叠加：① 旧 `app/ui/fonts.go` 的 `cjkFontCandidates()` 按 `runtime.GOOS` 给路径表（windows/darwin/桌面 Linux），Android 落入 default 分支拿到桌面 Linux 路径（`/usr/share/fonts/...`），在手机上恒不存在——安卓注册集合实际只有无 CJK 字形的 Go 字体；`FoundCJK()` 在安卓恒为假，但旧流程没有任何门禁据此拦截，桌面入口也只往日志写一行。② Gio v0.10.3 的 `text.NewShaper` 默认启用系统字体扫描（`gioui.org/text/gotext.go` 的 `newShaperImpl`，systemFonts 默认为真，经 go-text/typesetting 的 fontscan 枚举系统字体目录）——桌面帧验机装有 Noto Sans CJK，扫描兜底把缺陷①完全掩盖（修复前 strace 实测进程打开 `/usr/share/fonts` 12 次、含直读系统 Noto TTC）；手机上该兜底未生效（用户设备实测全豆腐）。结论：**渲染结果依赖运行环境装了什么字体，本身就是缺陷形态**；帧验环境有兜底是这类缺陷的标准藏身处。
+
+**内嵌字体构成**：每份 TTC 含 10 个面（比例字体 JP/KR/SC/TC/HK + 同五地 Mono），注册时只取比例字体 5 面并按 SC、TC、HK、JP、KR 排序（同地区 Normal 在 Bold 前）——出货语言为简中（源语言）、繁中，区域字形变体按此序优先；每面 cmap 覆盖全 CJK/假名/谚文，排序只影响共用码位的区域字形、不影响有无字形。Mono 面不注册（UI 无等宽 CJK 场景，日志中文回退比例面）。文件与发行原版 md5 一致（Regular `2b4b13a2…`、Bold `3dd7f29f…`，Debian fonts-noto-cjk 包记录核对）；sha256：Regular `b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a`、Bold `faa5f3656a78b2e2d450d27fe8382c778bc2b6bb5ea29c986664a6a435056ceb`。
+
+**体积账（如实记）**：内嵌增量 39,535,544 字节（Regular 19,484,784 + Bold 20,050,760），每个含 UI 的原生二进制各带一份。当前四 ABI 调试合并 APK（KI-18）中 libgojni.so 每 ABI 一份、字体随之四份——这是 KI-18 既有「未做 ABI 拆分」债务的放大项，正式包按 ABI 拆分后每下载只付一份。取舍说明：不用按 UI 文案子集化——节点名与订阅内容是任意用户文本，子集字体会在生僻节点名上再次翻车；全量字形覆盖优先于体积。
+
+**防复发门（CI 常驻）**：`app/ui/fonts_coverage_test.go` 三条：① 注册集合完整性（内嵌面数/地区序/字重钉死）；② 字形覆盖——三语语言包全部不重复字符（实测 824 个）+ 代码内硬编码符号（·—…↑↓⚠✓）+ 节点名样本（简/繁/日/韩名 + 生僻字「龘喆燚淼犇骉」+ 标语），逐字经 opentype `NominalGlyph` 断言在注册集合中有字形，缺一即红（负对照：旧的纯 Go 字体集合对同一字符集缺 747/824，证明此门能抓住原缺陷）；③ 生产 shaper 冒烟（`ui.NewShaper()` 对五种文本塑形且字形覆盖全部输入字符）。
+
+**隔离帧验（本地，2026-11-14）**：种子 store（语言 zh-Hans + 简/繁/韩文节点名）+ 桌面构建在 Xvfb 下截帧眼验：界面中文与节点名全部成字（含繁體「臺北101 · 臺灣高速節點」与韩文名）；同轮 strace 记录修复后二进制对系统字体目录的打开次数为 **0**（修复前 12 次）——即该帧每个字形只能来自内嵌字体。关闭标准仍是用户真机复测（见 KI-21），本地帧验不替代。

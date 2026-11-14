@@ -28,6 +28,7 @@
 | 15 | lz4（仅库） | lz4/lz4（经 vcpkg 引入） | BSD-2-Clause（仅库部分；其 GPLv2 的 CLI 工具部分不引入） | openvpn3 的压缩依赖，编入 .so | 已集成（随 openvpn3） |
 | 16 | xxHash（仅库） | Cyan4973/xxHash（经 vcpkg 引入） | BSD-2-Clause（仅库部分） | openvpn3 的哈希依赖，编入 .so | 已集成（随 openvpn3） |
 | 17 | OpenSSL | openssl/openssl（经 vcpkg 引入，3.x） | Apache-2.0 | openvpn3 的 TLS 后端，编入 .so（取 OpenSSL 而非 mbedTLS，与桌面端口径一致） | 已集成（随 openvpn3） |
+| 18 | Noto Sans CJK（思源黑体） | Google / Adobe（notofonts/noto-cjk） | SIL OFL 1.1（全文存 docs/licenses/OFL-1.1.txt） | UI 内嵌字体：app/ui/fontdata/ 两份 TTC（Regular + Bold），经 go:embed 编入二进制，全平台统一注册为 UI 字体集（口径见 docs/android产品界面接入.md §11.5） | 已集成（2026-11-14，KI-21） |
 
 ## 逐项分发义务（依审计报告第 5 节）
 
@@ -41,6 +42,7 @@
 8. **Xray-core**：若启用，其源文件保持 MPL-2.0（义务清单第 6 条）：修改其文件后分发须以 MPL-2.0 提供该等文件源码并告知获取方式；不移除或篡改许可声明；执行体分发须告知接收者如何获取 MPL 部分源码；仓库内标清 MPL/GPL 文件边界；MPL 不授予商标权。
 9. **filippo.io/age / filippo.io/hpke**：BSD-3-Clause 义务：源码与二进制分发均保留版权声明、许可条款与免责声明；不得以版权方/贡献者名义为衍生产品背书。随 libbox AAR 分发时其声明随 sing-box 的 GPL 对应源码义务一并提供（本仓库公开即满足）。构建工具 sagernet/gomobile（BSD-3-Clause）仅为构建期工具，不分发、不构成产品依赖，故不入逐项义务。
 10. **OpenVPN 3 core 及 libovpn3android.so 内依赖**：取 MPL-2.0 一侧分发——随附 MPL-2.0 全文（docs/licenses/MPL-2.0.txt）；保留上游版权与 SPDX 通知，不剥离不改写；本项目不修改 openvpn3 源码（构建胶水在本仓独立目录 android/openvpn3/，上游以钉死提交 0c1ce172fe918b05463d71e682a0c2f2d8fe7899 获取），钉死版本与上游仓库地址已在本文件与 docs/openvpn3许可证审查.md 登记，本仓库公开即满足 MPL 覆盖文件的源码可得性；将来若确需修改其文件，修改过的文件必须继续以 MPL-2.0 提供源码、独立存放并显著标注。**红线：永不引入 LZO**（GPL-2.0-only）；lz4 / xxHash 只用库目标，不混入其 GPLv2 工具部分。asio（BSL-1.0）、fmt（MIT）、jsoncpp（MIT）、lz4 库 / xxHash 库（BSD-2-Clause）、OpenSSL（Apache-2.0）的版权与许可声明随包保留。构建工具 SWIG 4.2.0 仅构建期使用、不分发，与 gomobile 同口径不入逐项义务；openvpn3 或其依赖版本变动时须复核上游 LICENSE.md 与 vcpkg.json 并更新本文件（审查文档义务 5）。
+11. **Noto Sans CJK**：SIL OFL 1.1 义务：随附许可证全文与字体版权声明（docs/licenses/OFL-1.1.txt，文件头含 Adobe 版权声明与 Reserved Font Name 'Source' 说明）；字体文件未作任何修改（与发行包 md5 核对一致，sha256 登记于 docs/android产品界面接入.md §11.5）；不得将字体本身单独出售。日后若做子集化或字形修改，衍生字体不得使用保留字体名（'Source'、'Noto'）命名，且必须继续以 OFL 1.1 发布并更新本条登记。
 
 ## OpenVPN / Wintun 捆绑登记（Windows 发行包，打包时逐项回填）
 

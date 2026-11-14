@@ -18,7 +18,6 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 
@@ -57,7 +56,7 @@ func TestLayoutFontScaling(t *testing.T) {
 			t.Fatalf("i18n.New(%s): %v", lang, err)
 		}
 		th := material.NewTheme()
-		th.Shaper = text.NewShaper(text.WithCollection(FontCollection()))
+		th.Shaper = NewShaper()
 		a := New(svc, tr, th)
 		for tab := 0; tab < 4; tab++ {
 			a.tab = tab
