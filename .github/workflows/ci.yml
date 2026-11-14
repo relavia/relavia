@@ -219,6 +219,52 @@ jobs:
           name: relavia-android-merged-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      # arm64-v8a-only variant of the merged APK (KI-18): with
+      # the full CJK font collection bundled per ABI (KI-21) the
+      # all-ABI merged APK is ~433 MB — over the delivery
+      # channel's limit — while the OpenVPN 3 core exists only
+      # for arm64-v8a anyway. Same Gradle build, one property:
+      # -PrelaviaAbis lands in ndk.abiFilters and AGP drops the
+      # other ABIs' native libraries at packaging time (see
+      # android/app/build.gradle.kts). The all-ABI artifact
+      # above stays the default product, built and verified
+      # exactly as before; this variant is uploaded under its
+      # own name. The rebuild overwrites app-debug.apk, so the
+      # full size is recorded first and the variant is staged
+      # under a distinct file name.
+      - name: Merged APK, arm64-v8a only (-PrelaviaAbis=arm64-v8a)
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          stat -c%s "$APK" > /tmp/relavia-full-apk-bytes
+          RELAVIA_ABIS=arm64-v8a ./scripts/build-android.sh shell
+          cp "$APK" android/app/build/outputs/apk/debug/app-debug-arm64-v8a.apk
+      - name: Verify merged APK, arm64-v8a only (same gates as the all-ABI artifact + size)
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug-arm64-v8a.apk
+          unzip -l "$APK"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libgojni\.so' || { echo "verify: arm64-v8a libgojni.so missing" >&2; exit 1; }
+          # The ABI filter must really have dropped the rest.
+          if unzip -l "$APK" | grep -E 'lib/(armeabi-v7a|x86_64|x86)/'; then
+            echo "verify: non-arm64 native libraries survived the ABI filter" >&2; exit 1
+          fi
+          # Same OpenVPN 3 presence gate as the main artifact.
+          unzip -l "$APK" | grep -E 'lib/arm64-v8a/libovpn3android\.so'
+          AAPT2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
+          # Same LAUNCHER gate as the main artifact.
+          "$AAPT2" dump badging "$APK" | grep -q "launchable-activity: name='org.gioui.GioActivity'" || { echo "verify: LAUNCHER is not org.gioui.GioActivity" >&2; "$AAPT2" dump badging "$APK" | grep launchable-activity >&2; exit 1; }
+          # Dropping three of four ~105 MB libgojni.so copies
+          # must land well under the all-ABI size; 60% is the
+          # hard ceiling (expected: ~30%).
+          FULL_BYTES="$(cat /tmp/relavia-full-apk-bytes)"
+          ARM_BYTES="$(stat -c%s "$APK")"
+          echo "all-ABI merged APK: $FULL_BYTES bytes; arm64-v8a only: $ARM_BYTES bytes"
+          test "$ARM_BYTES" -lt $((FULL_BYTES * 60 / 100)) || { echo "verify: arm64-v8a APK is not <60% of the all-ABI APK" >&2; exit 1; }
+      - name: Upload merged APK artifact (arm64-v8a only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-android-merged-debug-arm64
+          path: android/app/build/outputs/apk/debug/app-debug-arm64-v8a.apk
+          if-no-files-found: error
       - name: Install gogio
         run: go install gioui.org/cmd/gogio@v0.10.3
       - name: Gio logic-build APK (gogio, NDK from the runner image)

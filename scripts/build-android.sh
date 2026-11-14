@@ -24,6 +24,9 @@
 #   ./scripts/build-android.sh check   # Go-side GOOS=android cross-compile gate only (no SDK needed)
 #   ./scripts/build-android.sh bind    # gomobile bind -> android/app/libs/libboxbind.aar
 #   ./scripts/build-android.sh shell   # Gradle assembleDebug for the Kotlin shell (needs the AAR for the merged APK)
+#                                      # Set RELAVIA_ABIS=arm64-v8a to restrict the merged APK to
+#                                      # those ABIs (-PrelaviaAbis, packaging-time abiFilters in
+#                                      # android/app/build.gradle.kts; KI-18). Unset = all ABIs.
 #   ./scripts/build-android.sh gio     # gogio APK for the Go logic build
 #   ./scripts/build-android.sh all     # check + bind + shell + gio
 #
@@ -110,7 +113,12 @@ build_shell() {
     # a shell APK without the data plane is not a producible
     # artifact (docs/libbox绑定.md §5).
     echo "== Kotlin VpnService shell + libbox AAR = merged APK (Gradle assembleDebug) =="
-    (cd "$ROOT/android" && gradle :app:assembleDebug --console=plain --stacktrace)
+    local gradle_args=()
+    if [ -n "${RELAVIA_ABIS:-}" ]; then
+        gradle_args+=("-PrelaviaAbis=$RELAVIA_ABIS")
+        echo "build-android: ABI filter active (abiFilters): $RELAVIA_ABIS"
+    fi
+    (cd "$ROOT/android" && gradle :app:assembleDebug --console=plain --stacktrace "${gradle_args[@]}")
     local apk="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
     ls -l "$apk"
     sha256sum "$apk"

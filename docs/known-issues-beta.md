@@ -172,6 +172,18 @@ parsers 内部节点表示与 core/specnode 两份镜像并存（行为一致、
 234,980,461 字节：gomobile AAR 含 arm64-v8a / armeabi-v7a /
 x86 / x86_64 四 ABI 原生库，未做 ABI 拆分。功能无影响，下载
 耗时较长。来源：本步组装实测。
+进展（2026-11-14）：内嵌全量 CJK 字体（KI-21）后每份
+libgojni.so 各带一份字体，全 ABI 合并包涨至约 433 MB，
+zip 后约 224 MB，已超交付通道上限。CI 的 android 作业
+现已在主产物之后追加产出仅 arm64-v8a 的合并 APK（产物
+relavia-android-merged-debug-arm64）：Gradle 属性
+-PrelaviaAbis=arm64-v8a 经 ndk.abiFilters 在打包期过滤
+AAR 与 jniLibs 的原生库，只保留一份 libgojni.so，校验与
+主产物同等（入口断言、libovpn3android.so 在位断言）并
+断言体积 < 全 ABI 版 60%。全 ABI 构建仍是默认主产物，
+行为不变；OpenVPN 3 核心本来就只有 arm64-v8a，其余三
+ABI 对 arm64 真机是纯死重。正式发布前的 ABI 拆分 / 应用
+商店分发策略仍待定，本条不关闭。
 
 ### KI-19 更新清单默认 URL 真链路未验
 客户端默认 beta 清单 URL 指向 GitHub Releases 的 latest 资产，

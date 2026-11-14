@@ -27,6 +27,32 @@ val relaviaVersionName: String =
 val relaviaVersionCode: Int =
     (findProperty("relaviaVersionCode") as String?)?.toIntOrNull() ?: relaviaDerivedVersionCode
 
+// Optional ABI restriction for the merged APK, e.g.
+// -PrelaviaAbis=arm64-v8a (comma-separated for several).
+// Unset (the default) leaves the ndk configuration untouched
+// and the build packages every ABI the inputs carry — the
+// long-standing behavior. When set, the list is applied as
+// ndk.abiFilters in defaultConfig below.
+//
+// Why abiFilters, not splits: abiFilters is a packaging-time
+// filter over native libraries from EVERY source — the
+// gomobile AAR's jni/<abi>/ directories and src/main/jniLibs
+// alike — so the three unneeded libgojni.so copies (each one
+// embedding the full bundled CJK font collection, KI-21) are
+// dropped without rebuilding the AAR, and the build still
+// emits the single app-debug.apk at the usual path. Splits
+// would instead emit several APKs under new names (plus a
+// universal APK), changing the artifact surface every
+// consumer and verify step keys on. First consumer: the CI
+// android job's additional arm64-v8a-only artifact
+// (KI-18); the all-ABI build remains the default product.
+val relaviaAbis: List<String> =
+    (findProperty("relaviaAbis") as String?)
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?: emptyList()
+
 android {
     namespace = "org.relavia.client"
     compileSdk = 34
@@ -39,6 +65,11 @@ android {
         targetSdk = 34
         versionCode = relaviaVersionCode
         versionName = relaviaVersionName
+        if (relaviaAbis.isNotEmpty()) {
+            ndk {
+                abiFilters.addAll(relaviaAbis)
+            }
+        }
     }
 
     buildTypes {
