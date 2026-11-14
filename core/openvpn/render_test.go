@@ -96,6 +96,80 @@ func TestRenderProfileWithCredentials(t *testing.T) {
 	}
 }
 
+func TestRenderProfilePoolTLSVersionCap(t *testing.T) {
+	// A VPN Gate pool node (provenance stamped by the CSV
+	// intake) gets the pool TLS ceiling appended and recorded
+	// (diagnosis §10): SoftEther's OpenVPN clone captures the
+	// client certificate reliably only in a <= TLS 1.2
+	// handshake on the affected builds.
+	n := passthroughNode(sampleBody)
+	n.Source = specnode.SourceRef{Kind: "plugin", Ref: "vpngate", Authorization: "vpngate-official-csv"}
+	n.OpenVPN.Username = "vpn" // sampleBody asks for auth; creds supplied
+	rp, err := RenderProfile(n)
+	if err != nil {
+		t.Fatalf("RenderProfile: %v", err)
+	}
+	if got := strings.Count(rp.Text, "tls-version-max "+poolTLSVersionMax); got != 1 {
+		t.Errorf("rendered pool profile carries the TLS cap %d times, want exactly 1:\n%s", got, rp.Text)
+	}
+	found := false
+	for _, r := range rp.Rewritten {
+		if r == poolTLSVersionMaxRecord {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Rewritten does not list the pool TLS cap: %v", rp.Rewritten)
+	}
+}
+
+func TestRenderProfileUserNodeNoTLSVersionCap(t *testing.T) {
+	// The identical body on a user-supplied node (the
+	// passthroughNode default provenance: manual) must keep
+	// full TLS negotiation — the cap is keyed to pool
+	// provenance, never to the protocol family.
+	n := passthroughNode(sampleBody)
+	n.OpenVPN.Username = "vpn"
+	rp, err := RenderProfile(n)
+	if err != nil {
+		t.Fatalf("RenderProfile: %v", err)
+	}
+	if strings.Contains(rp.Text, "tls-version-max") {
+		t.Errorf("user node profile gained a TLS cap:\n%s", rp.Text)
+	}
+	for _, r := range rp.Rewritten {
+		if r == poolTLSVersionMaxRecord {
+			t.Errorf("user node Rewritten lists the pool TLS cap: %v", rp.Rewritten)
+		}
+	}
+	// Another plugin's nodes are not the VPN Gate pool.
+	n2 := passthroughNode(sampleBody)
+	n2.Source = specnode.SourceRef{Kind: "plugin", Ref: "some-other-source", Authorization: "self"}
+	n2.OpenVPN.Username = "vpn"
+	rp2, err := RenderProfile(n2)
+	if err != nil {
+		t.Fatalf("RenderProfile: %v", err)
+	}
+	if strings.Contains(rp2.Text, "tls-version-max") {
+		t.Errorf("non-vpngate plugin node profile gained a TLS cap:\n%s", rp2.Text)
+	}
+}
+
+func TestBuildConfigPoolTLSVersionCap(t *testing.T) {
+	// The desktop process-adapter path (buildConfig) shares
+	// the builders, so a pool node is capped there too — and
+	// OpenVPN 2.x honors the directive natively.
+	n := passthroughNode(sampleBody)
+	n.Source = specnode.SourceRef{Kind: "plugin", Ref: "vpngate", Authorization: "vpngate-official-csv"}
+	bc, err := buildConfig(n, buildOptions{})
+	if err != nil {
+		t.Fatalf("buildConfig: %v", err)
+	}
+	if got := strings.Count(bc.text, "tls-version-max "+poolTLSVersionMax); got != 1 {
+		t.Errorf("desktop pool config carries the TLS cap %d times, want exactly 1:\n%s", got, bc.text)
+	}
+}
+
 func TestRenderProfileRejectsNonOpenVPN(t *testing.T) {
 	if _, err := RenderProfile(&specnode.Node{Protocol: specnode.ProtocolTrojan}); err == nil {
 		t.Fatal("RenderProfile succeeded for a node without OpenVPN credential")

@@ -30,6 +30,24 @@
 #      tolerant server it passes too; on a server vintage
 #      that reproduces the real-device stall it is the
 #      informative difference.
+#   5. The production-rendered pool profile carries the pool
+#      TLS ceiling (tls-version-max 1.2, core/openvpn
+#      genconfig.go, diagnosis §10), and the core under test
+#      is the pinned tree PLUS the downstream patches in
+#      android/openvpn3/patches/ (0001 makes the core honor
+#      that directive): the main run must therefore negotiate
+#      TLS 1.2 and pass, and a record run with the ceiling
+#      stripped must still pass at TLS 1.3 (the patch did not
+#      break the modern path).
+#   6. Legacy reproduction (diagnosis §10): against SoftEther
+#      4.29 — whose OpenVPN clone has no client-certificate
+#      capture at all — the same production profile must fail
+#      with the exact real-device signature (Session ACTIVE,
+#      then AUTH_FAILED; server security log: "External
+#      server authentication", empty user name). This gate
+#      pins a KNOWN server-side defect: if it ever flips, the
+#      §10 conclusion and the pool TLS ceiling rationale must
+#      be revisited, not silently celebrated.
 #
 # Assertion endpoint: control-channel completion (CONNECTED
 # event + negotiated cipher cross-checked in both logs).
@@ -69,6 +87,18 @@ if [ -z "$OPENVPN3_COMMIT" ]; then
   exit 2
 fi
 
+# SoftEther legacy pin (diagnosis §10): 4.29's OpenVPN clone
+# predates client-certificate capture (its Interop_OpenVPN.c
+# builds the TLS pipe without the cert_verify callback 4.38+
+# added), so a certificate-only pool session can only be
+# refused — the legacy section below reproduces that
+# AUTH_FAILED signature as a pinned known-defect gate.
+SOFTETHER_OLD_TAG=v4.29-9680-rtm
+SOFTETHER_OLD_TARBALL=softether-vpnserver-v4.29-9680-rtm-2019.02.28-linux-x64-64bit.tar.gz
+SOFTETHER_OLD_URL=https://github.com/SoftEtherVPN/SoftEtherVPN_Stable/releases/download/$SOFTETHER_OLD_TAG/$SOFTETHER_OLD_TARBALL
+SOFTETHER_OLD_SHA256=700e4dc58a263cd8e97ea66d3744c29648bc5f1aa9f0e355ed43fb6ca4022dd7
+SE_OLD_DIR="$WORK/softether-old/vpnserver"
+
 # SoftEther ports: the OpenVPN clone rides the server's main
 # TCP listeners; the rig uses 1194 (a default listener).
 SE_DIR="$WORK/softether/vpnserver"
@@ -101,6 +131,7 @@ record() { echo "RIG_$1=$2"; }
 cleanup() {
   for pid in $BG_PIDS; do kill "$pid" 2>/dev/null || true; done
   if [ -x "$SE_DIR/vpnserver" ]; then (cd "$SE_DIR" && ./vpnserver stop >/dev/null 2>&1) || true; fi
+  if [ -x "$SE_OLD_DIR/vpnserver" ]; then (cd "$SE_OLD_DIR" && ./vpnserver stop >/dev/null 2>&1) || true; fi
   cp -f "$WORK"/*.log "$OUT/" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -312,6 +343,21 @@ if [ ! -d "$SRC/.git" ]; then
   git clone -q https://github.com/OpenVPN/openvpn3.git "$SRC"
 fi
 git -C "$SRC" checkout -q "$OPENVPN3_COMMIT"
+# Relavia downstream patches — the rig must test the core the
+# APK actually ships, which is the pinned tree plus
+# android/openvpn3/patches/ (applied by the Android build
+# script the same way; see 0001-tls-version-max.patch and
+# diagnosis §10). The reverse check keeps re-runs over a
+# reused $RIG_WORK idempotent.
+for p in "$REPO_ROOT/android/openvpn3/patches/"*.patch; do
+  [ -e "$p" ] || continue
+  if git -C "$SRC" apply --check "$p" 2>/dev/null; then
+    git -C "$SRC" apply "$p"
+  elif ! git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then
+    echo "RIG_FATAL=downstream patch does not apply: $p"
+    exit 2
+  fi
+done
 GEN="$WORK/gen"
 mkdir -p "$GEN/java"
 swig -c++ -java -package net.openvpn.ovpn3 \
@@ -383,9 +429,11 @@ PYEOF
 "$WORK/rigprofile" -csv "$WORK/rig.csv" -out "$WORK/rendered.ovpn" > "$WORK/render.log" 2>&1 || {
   echo "RIG_FATAL=RenderProfile failed"; exit 2; }
 # Render invariant: production output differs from the source
-# document only by the resolv-retry rewrite and a trailing
-# blank line (both strip out below before the diff).
-strip_render_noise() { printf '%s' "$(grep -v '^resolv-retry' "$1")"; }
+# document only by the resolv-retry rewrite, the pool TLS
+# ceiling appended for pool-provenance nodes (diagnosis §10)
+# and a trailing blank line (all strip out below before the
+# diff).
+strip_render_noise() { printf '%s' "$(grep -v '^resolv-retry' "$1" | grep -v '^tls-version-max')"; }
 if diff <(strip_render_noise "$WORK/fixture.ovpn") \
         <(strip_render_noise "$WORK/rendered.ovpn") > "$WORK/render-diff.log" 2>&1; then
   gate RENDER_INVARIANT 1
@@ -411,6 +459,13 @@ main_rc=$?
 iv_has_cbc=$(grep -c "^RIG_IV_CIPHERS=.*AES-128-CBC" "$WORK/main-softether.log" || true)
 gate PEER_INFO_ADVERTISES_CBC "$([ "$iv_has_cbc" -ge 1 ] && echo 1 || echo 0)"
 gate MAIN_SOFTETHER_PASS "$([ "$main_rc" = "0" ] && grep -q "^RIG_RESULT=PASS" "$WORK/main-softether.log" && echo 1 || echo 0)"
+# The main run consumes the production-rendered pool profile,
+# which carries the pool TLS ceiling (diagnosis §10): with
+# the downstream core patch applied the session must have
+# negotiated TLS 1.2 — this gate is what proves the patch is
+# present and effective in the shipped core, not just in the
+# patch file.
+gate TLS_CAP_NEGOTIATED_12 "$(grep -q "TLSv1\.2" "$WORK/main-softether.log" && echo 1 || echo 0)"
 sec_log="$SE_DIR/security_log/DEFAULT/sec_$(date +%Y%m%d).log"
 se_session=$(grep -ci "VPNGateClientCert-\[OPENVPN_L3\]" "$sec_log" 2>/dev/null || true)
 gate SOFTETHER_SIDE_SESSION "$([ "${se_session:-0}" -ge 1 ] && echo 1 || echo 0)"
@@ -422,6 +477,15 @@ if grep -q "^RIG_RESULT=PASS" "$WORK/bisect-aead-only.log"; then
 else
   record BISECT_AEAD_ONLY FAIL_on_this_server
 fi
+
+note "record: uncapped profile (pool TLS ceiling stripped) x SoftEther"
+# The ceiling is a pool-session compatibility measure, not a
+# core limitation: with it stripped, the patched core must
+# still complete at TLS 1.3 against the modern server.
+grep -v '^tls-version-max' "$WORK/rendered.ovpn" > "$WORK/rendered-uncapped.ovpn"
+run_driver "$WORK/rendered-uncapped.ovpn" "$WORK/uncapped-softether.log"
+uncapped_rc=$?
+gate UNCAPPED_TLS13_PASS "$([ "$uncapped_rc" = "0" ] && grep -q "^RIG_RESULT=PASS" "$WORK/uncapped-softether.log" && grep -q "TLSv1\.3" "$WORK/uncapped-softether.log" && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------
 note "control A: production core x genuine OpenVPN 2.6 server"
@@ -508,6 +572,81 @@ if [ -f "$WORK/cap-core.c2s.bin" ] && [ -f "$WORK/cap-ref.c2s.bin" ]; then
 else
   echo "RIG_COMPARE=skipped (relay captures missing)"
   gate FIRST_PACKET_IDENTICAL 0
+fi
+
+# ---------------------------------------------------------------
+note "legacy reproduction: production core x SoftEther 4.29 (known-defect gate)"
+# ---------------------------------------------------------------
+# Diagnosis §10: 4.29's OpenVPN clone never captures the
+# client certificate (no cert_verify callback on its TLS
+# pipe), so a certificate-only pool session is classified as
+# "external server authentication" with an empty user name
+# and refused with AUTH_FAILED after Session is ACTIVE —
+# the 2026-11-15 real-device signature. The production
+# profile (pool TLS ceiling included: 4.29 negotiates
+# TLS 1.2 anyway) must reproduce that failure EXACTLY. If
+# this gate ever flips, §10's conclusion is stale and must
+# be revisited before anyone celebrates.
+(cd "$SE_DIR" && ./vpnserver stop >/dev/null 2>&1) || true
+sleep 2
+if [ ! -x "$SE_OLD_DIR/vpnserver" ]; then
+  mkdir -p "$WORK/softether-old"
+  curl -sL -o "$WORK/softether-old/se.tar.gz" "$SOFTETHER_OLD_URL"
+  echo "$SOFTETHER_OLD_SHA256  $WORK/softether-old/se.tar.gz" | sha256sum -c - || {
+    echo "RIG_FATAL=SoftEther 4.29 tarball sha256 mismatch"; exit 2; }
+  tar -xzf "$WORK/softether-old/se.tar.gz" -C "$WORK/softether-old"
+  (cd "$SE_OLD_DIR" && printf '1\n1\n1\n' | make > "$WORK/softether-old-make.log" 2>&1) || {
+    echo "RIG_FATAL=SoftEther 4.29 build failed (see softether-old-make.log)"; exit 2; }
+fi
+"$SE_OLD_DIR/vpnserver" start > "$WORK/softether-old-start.log" 2>&1 || true
+old_ready=0
+for _ in $(seq 1 60); do
+  if timeout 10 "$SE_OLD_DIR/vpncmd" "$SE_ADMIN_HOST" /SERVER /CMD OpenVpnGet </dev/null >"$WORK/se-old-openvpnget.log" 2>&1; then
+    old_ready=1
+    break
+  fi
+  sleep 5
+done
+gate LEGACY_SOFTETHER_UP "$old_ready"
+if [ "$old_ready" = "1" ]; then
+  vpncmd_old() { timeout 30 "$SE_OLD_DIR/vpncmd" "$SE_ADMIN_HOST" /SERVER "$@" </dev/null 2>&1; }
+  vpncmd_old_file() { (cd "$WORK" && timeout 30 "$SE_OLD_DIR/vpncmd" "$SE_ADMIN_HOST" /SERVER "$@" </dev/null 2>&1); }
+  vpncmd_old /CMD OpenVpnEnable yes > "$WORK/se-old-cfg-openvpn.log" 2>&1
+  vpncmd_old_file /CMD ServerCertGet server-cert-old.pem > "$WORK/se-old-cfg-cert.log" 2>&1
+  vpncmd_old_file /HUB:DEFAULT /CMD CAAdd client-cert.pem > "$WORK/se-old-cfg-caadd.log" 2>&1
+  vpncmd_old /HUB:DEFAULT /CMD UserCreate VPNGateClientCert /GROUP:none /REALNAME:none /NOTE:none > "$WORK/se-old-cfg-user.log" 2>&1
+  printf 'VPNGateClientCert\n\n' | timeout 30 "$SE_OLD_DIR/vpncmd" "$SE_ADMIN_HOST" /SERVER /HUB:DEFAULT /CMD UserSignedSet VPNGateClientCert > "$WORK/se-old-cfg-signed.log" 2>&1
+  vpncmd_old /HUB:DEFAULT /CMD SecureNatEnable > "$WORK/se-old-cfg-nat.log" 2>&1
+  old_auth_type=$(vpncmd_old /HUB:DEFAULT /CMD UserGet VPNGateClientCert | grep -i "Auth Type" | grep -ci "Signed Certificate" || true)
+  gate LEGACY_SOFTETHER_HUB_CONFIG "$([ "${old_auth_type:-0}" -ge 1 ] && echo 1 || echo 0)"
+  python3 - "$WORK" <<'PYEOF' || { echo "RIG_FATAL=legacy fixture synthesis failed"; exit 2; }
+import base64, pathlib, re, sys
+work = pathlib.Path(sys.argv[1])
+ca = (work / "server-cert-old.pem").read_text().strip()
+doc = (work / "fixture.ovpn").read_text()
+doc = re.sub(r"<ca>\n.*?\n</ca>", "<ca>\n" + ca + "\n</ca>", doc, flags=re.S)
+(work / "fixture-old.ovpn").write_text(doc)
+b64 = base64.b64encode(doc.encode()).decode()
+hdr = "#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort,NumVpnSessions,Uptime,TotalUsers,TotalTraffic,LogType,Operator,Message,OpenVPN_ConfigData_Base64"
+row = f"rig-softether-old,127.0.0.1,1000000,10,1000000,Japan,JP,1,1000,1,1000,2weeks,Rig,Test,{b64}"
+(work / "rig-old.csv").write_text("*vpn_servers\n" + hdr + "\n" + row + "\n*\n")
+print("legacy fixture synthesized")
+PYEOF
+  "$WORK/rigprofile" -csv "$WORK/rig-old.csv" -out "$WORK/rendered-old.ovpn" >> "$WORK/render.log" 2>&1 || {
+    echo "RIG_FATAL=legacy RenderProfile failed"; exit 2; }
+  sec_old="$SE_OLD_DIR/security_log/DEFAULT/sec_$(date +%Y%m%d).log"
+  sec_old_before=0
+  [ -f "$sec_old" ] && sec_old_before=$(wc -l < "$sec_old")
+  run_driver "$WORK/rendered-old.ovpn" "$WORK/legacy-429.log"
+  legacy_rc=$?
+  record LEGACY_429_DRIVER_RC "$legacy_rc"
+  gate LEGACY_429_AUTH_FAILED_SIGNATURE "$([ "$legacy_rc" != "0" ] && grep -q "Session is ACTIVE" "$WORK/legacy-429.log" && grep -q "AUTH_FAILED" "$WORK/legacy-429.log" && echo 1 || echo 0)"
+  old_sig=0
+  if [ -f "$sec_old" ]; then
+    old_sig=$(tail -n "+$((sec_old_before + 1))" "$sec_old" | grep -c "External server authentication" || true)
+  fi
+  gate LEGACY_429_SERVER_SIGNATURE "$([ "${old_sig:-0}" -ge 1 ] && echo 1 || echo 0)"
+  (cd "$SE_OLD_DIR" && ./vpnserver stop >/dev/null 2>&1) || true
 fi
 
 # ---------------------------------------------------------------

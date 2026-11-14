@@ -130,6 +130,46 @@ func firstToken(line string) string {
 // the adapter/engine connect timeout, not name resolution.
 const boundedResolvRetry = "2"
 
+// poolTLSVersionMax is the TLS version ceiling appended to
+// every rendered profile for a VPN Gate pool session (see
+// isVPNGatePoolNode), and poolTLSVersionMaxRecord is the
+// Rewritten entry that discloses the append.
+const poolTLSVersionMax = "1.2"
+const poolTLSVersionMaxRecord = "tls-version-max(added:pool<=" + poolTLSVersionMax + ")"
+
+// isVPNGatePoolNode reports whether the node is a VPN Gate
+// public-pool node. The provenance stamp is set by the CSV
+// intake (parsers stamps Source{Kind:"plugin", Ref:"vpngate"}
+// for nodes parsed from the official list) and preserved by
+// the store for pool nodes; user-imported or hand-built nodes
+// carry other kinds/refs and never match.
+//
+// TLS version cap for pool sessions (diagnosis
+// docs/真机连接失败诊断-2026-11-14.md §10): every VPN Gate
+// host runs SoftEther, whose OpenVPN clone authenticates a
+// certificate-only client from the client certificate its
+// TLS pipe captures during the handshake (NewSslPipeEx's
+// cert_verify callback feeding IPC's ClientCertificate in
+// 4.38+; 4.29's clone has no capture at all and can only
+// AUTH_FAILED an empty-credential attempt). On in-between
+// builds the capture is only reliable in a classic
+// <= TLS 1.2 handshake: under TLS 1.3 the client certificate
+// travels in the encrypted post-server flight, the clone
+// proceeds with no certificate, classifies the attempt as
+// "external server authentication" with an empty user name
+// (its security log's words), and answers AUTH_FAILED after
+// Session is ACTIVE — the real-device signature of
+// 2026-11-15. Capping pool sessions at TLS 1.2 restores the
+// handshake shape the clone's capture was built for. The
+// scope is the node's pool provenance, never the protocol
+// family: user-supplied OpenVPN nodes keep full TLS
+// negotiation. The directive is honored natively by
+// OpenVPN 2.x and by our OpenVPN 3 build through the
+// downstream patch in android/openvpn3/patches/.
+func isVPNGatePoolNode(n *specnode.Node) bool {
+	return n != nil && n.Source.Kind == "plugin" && n.Source.Ref == "vpngate"
+}
+
 // isInfiniteResolvRetry reports whether a resolv-retry line
 // asks for unbounded retries ("resolv-retry infinite").
 func isInfiniteResolvRetry(trimmed string) bool {
@@ -247,6 +287,13 @@ func buildPassthrough(n *specnode.Node, bo buildOptions) (*builtConfig, error) {
 	if !hasVerb {
 		out = append(out, "verb 3")
 	}
+	if isVPNGatePoolNode(n) {
+		// Pool TLS ceiling (see isVPNGatePoolNode): appended
+		// last so it wins over any same-named line the source
+		// body carried.
+		out = append(out, "tls-version-max "+poolTLSVersionMax)
+		bc.rewritten = append(bc.rewritten, poolTLSVersionMaxRecord)
+	}
 	bc.authRequired = hasAuthUserPass
 	bc.usesAuth = hasAuthUserPass && n.OpenVPN.Username != ""
 	bc.text = strings.Join(out, "\n") + "\n"
@@ -329,6 +376,14 @@ func buildStructured(n *specnode.Node, bo buildOptions) (*builtConfig, error) {
 		bc.usesAuth = true
 	}
 	b.WriteString("verb 3\n")
+	if isVPNGatePoolNode(n) {
+		// Pool TLS ceiling (see isVPNGatePoolNode). Pool
+		// nodes arrive as full-text documents in practice;
+		// the rule is keyed to provenance, so it applies in
+		// structured mode too.
+		b.WriteString("tls-version-max " + poolTLSVersionMax + "\n")
+		bc.rewritten = append(bc.rewritten, poolTLSVersionMaxRecord)
+	}
 	bc.text = b.String()
 	return bc, nil
 }

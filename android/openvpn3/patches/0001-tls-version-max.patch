@@ -1,0 +1,106 @@
+Relavia downstream patch 0001: honor the tls-version-max profile
+directive in the pinned OpenVPN 3 core (0c1ce172).
+
+Upstream deliberately leaves the OpenSSL context's
+tls_version_max field unsettable from a profile ("use for
+testing only (NOT exposed via tls-version-max)" —
+openvpn/openssl/ssl/sslctx.hpp) and lists the directive among
+the ignored options ("We don't allow restricting max
+version" — openvpn/client/cliopt.hpp). The apply side already
+exists (SSL_CTX_set_max_proto_version); only the parse side
+is missing.
+
+Relavia needs the cap for VPN Gate pool sessions: SoftEther's
+OpenVPN clone captures the client certificate reliably only
+in a classic <= TLS 1.2 handshake on the affected builds, and
+answers AUTH_FAILED under TLS 1.3 (diagnosis
+docs/真机连接失败诊断-2026-11-14.md §10). The cap itself is
+applied per-profile by the Go render layer, keyed to pool
+provenance only (core/openvpn/genconfig.go
+isVPNGatePoolNode); this patch merely makes the core honor
+the standard directive.
+
+Changes (OpenSSL backend only; our builds never compile the
+mbedTLS backend):
+  - openvpn/ssl/tlsver.hpp: parse_tls_version_max(), mirroring
+    the existing parse_tls_version_min() OptionList overload.
+  - openvpn/openssl/ssl/sslctx.hpp: parse the directive into
+    the existing tls_version_max config field.
+  - openvpn/client/cliopt.hpp: drop "tls-version-max" from
+    the ignored-with-warning set (it is honored now, so
+    reporting it as ignored would be false).
+
+Applied by android/openvpn3/build-openvpn3-android.sh and
+android/openvpn3/rig/run-rig.sh right after the pinned
+checkout. Rebase cost on a future pin bump: re-check the
+three anchors; the patch is intentionally minimal.
+diff --git a/openvpn/client/cliopt.hpp b/openvpn/client/cliopt.hpp
+index 044e7c2d..79e403bf 100644
+--- a/openvpn/client/cliopt.hpp
++++ b/openvpn/client/cliopt.hpp
+@@ -723,7 +723,10 @@ class ClientOptions : public RC<thread_unsafe_refcount>
+         "socket-flags",
+         "suppress-timestamps", /* harmless to ignore  */
+         "tcp-nodelay",
+-        "tls-version-max", /* We don't allow restricting max version */
++        /* "tls-version-max" removed by the Relavia downstream
++           patch: our build DOES honor it (see openvpn/ssl/
++           tlsver.hpp parse_tls_version_max), so it must not be
++           reported as an ignored option. */
+         "tun-mtu-extra",   /* (only really used in tap in OpenVPN 2.x)*/
+         "udp-mtu",         /* Alias for link-mtu */
+         "user",
+diff --git a/openvpn/openssl/ssl/sslctx.hpp b/openvpn/openssl/ssl/sslctx.hpp
+index d2f7c331..4e8acbb3 100644
+--- a/openvpn/openssl/ssl/sslctx.hpp
++++ b/openvpn/openssl/ssl/sslctx.hpp
+@@ -560,6 +560,11 @@ class OpenSSLContext : public SSLFactoryAPI
+             // Parse tls-version-min option.
+             tls_version_min = TLSVersion::parse_tls_version_min(opt, relay_prefix, maxver());
+ 
++            // Parse tls-version-max option (Relavia downstream:
++            // feeds the tls_version_max field below, which
++            // upstream leaves unsettable from a profile).
++            tls_version_max = TLSVersion::parse_tls_version_max(opt, relay_prefix);
++
+             // parse tls-cert-profile
+             tls_cert_profile = TLSCertProfile::parse_tls_cert_profile(opt, relay_prefix);
+ 
+diff --git a/openvpn/ssl/tlsver.hpp b/openvpn/ssl/tlsver.hpp
+index 96777ff5..2d9ac9fe 100644
+--- a/openvpn/ssl/tlsver.hpp
++++ b/openvpn/ssl/tlsver.hpp
+@@ -85,6 +85,33 @@ inline Type parse_tls_version_min(const OptionList &opt,
+     return Type::UNDEF;
+ }
+ 
++// Relavia downstream addition (not upstream): parse the
++// tls-version-max option. Upstream deliberately leaves the
++// corresponding SSL config field unexposed ("use for testing
++// only"); Relavia exposes it because legacy SoftEther
++// OpenVPN-clone servers only capture the client certificate
++// during a classic (<= TLS 1.2) handshake — see
++// docs/真机连接失败诊断-2026-11-14.md §10 in the Relavia repo.
++inline Type parse_tls_version_max(const OptionList &opt,
++                                  const std::string &relay_prefix)
++{
++    const Option *o = opt.get_ptr(relay_prefix + "tls-version-max");
++    if (o)
++    {
++        const std::string ver = o->get_optional(1, 16);
++        if (ver == "1.0")
++            return Type::V1_0;
++        if (ver == "1.1")
++            return Type::V1_1;
++        if (ver == "1.2")
++            return Type::V1_2;
++        if (ver == "1.3")
++            return Type::V1_3;
++        throw option_error(ERR_INVALID_OPTION_CRYPTO, "tls-version-max: unrecognized TLS version");
++    }
++    return Type::UNDEF;
++}
++
+ inline void apply_override(Type &tvm, const std::string &override)
+ {
+     const Type orig = tvm;

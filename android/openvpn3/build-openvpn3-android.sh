@@ -44,6 +44,27 @@ if [ ! -d "$SRC" ]; then
 fi
 git -C "$SRC" checkout -q "$OPENVPN3_COMMIT"
 
+echo "== apply Relavia downstream patches =="
+# Downstream patches live in android/openvpn3/patches/ (see
+# the header of each patch for what it changes and why — e.g.
+# 0001 makes the core honor the tls-version-max directive for
+# VPN Gate pool sessions, diagnosis §10). The reverse check
+# keeps re-runs over a reused $WORK idempotent; a patch that
+# neither applies nor is already applied fails the build
+# loudly rather than silently shipping an unpatched core.
+for p in "$REPO_ROOT/android/openvpn3/patches/"*.patch; do
+  [ -e "$p" ] || continue
+  if git -C "$SRC" apply --check "$p" 2>/dev/null; then
+    git -C "$SRC" apply "$p"
+    echo "applied $(basename "$p")"
+  elif git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then
+    echo "already applied $(basename "$p")"
+  else
+    echo "downstream patch does not apply: $p" >&2
+    exit 2
+  fi
+done
+
 for ABI in "${ABIS[@]}"; do
   TRIPLET=$(triplet_for "$ABI")
   echo "== vcpkg deps ($TRIPLET) =="
