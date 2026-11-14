@@ -120,23 +120,89 @@ if [ ! -x "$SE_DIR/vpnserver" ]; then
   (cd "$SE_DIR" && printf '1\n1\n1\n' | make > "$WORK/softether-make.log" 2>&1) || {
     echo "RIG_FATAL=SoftEther build failed (see softether-make.log)"; exit 2; }
 fi
+# se_diag dumps the SoftEther server's observable state for
+# post-mortem diagnosis: the process table entry, listening
+# sockets, the tail of the start log and of the last admin
+# probe, and the tails of the server's own logs when present.
+# Output goes to stdout (the CI step log) and to
+# $WORK/se-diagnostics.log (copied into the rig artifacts).
+se_diag() {
+  {
+    echo "--- se_diag $(date -u +%Y-%m-%dT%H:%M:%SZ) ---"
+    echo "[processes]"
+    ps aux 2>/dev/null | grep -i "[v]pnserver" || echo "(no vpnserver process)"
+    echo "[listening sockets]"
+    (ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || echo "(no ss/netstat)") | head -40
+    echo "[softether-start.log tail]"
+    tail -n 50 "$WORK/softether-start.log" 2>/dev/null || echo "(missing)"
+    echo "[se-openvpnget.log tail]"
+    tail -n 20 "$WORK/se-openvpnget.log" 2>/dev/null || echo "(missing)"
+    for d in "$SE_DIR"/*_log; do
+      [ -d "$d" ] || continue
+      for f in "$d"/*.log; do
+        [ -f "$f" ] || continue
+        echo "[server log tail: $f]"
+        tail -n 30 "$f" 2>/dev/null
+      done
+    done
+  } | tee "$WORK/se-diagnostics.log"
+}
+
+# se_port_open <port>: raw TCP connect probe against the
+# loopback, used only to narrate the readiness wait (is a
+# listener bound at all yet?). Readiness itself is decided
+# solely by a real admin command succeeding, below.
+se_port_open() { timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null; }
+
 "$SE_DIR/vpnserver" start > "$WORK/softether-start.log" 2>&1 || true
-# Wait for the admin interface to answer.
+# Bounded readiness wait. "vpnserver start" returns as soon as
+# the daemon is spawned, but the management listeners bind
+# asynchronously, and on a loaded CI runner they can take
+# minutes to answer (run 43593096262: the start log reported
+# the service started, yet every admin probe kept failing
+# with Error code 1 until the old fixed-count loop gave up,
+# before any configuration or handshake step ran). Poll a
+# real admin command over 127.0.0.1 (no localhost name
+# resolution or address-family ambiguity) until it succeeds
+# or the total deadline passes. This waits for readiness
+# only: it never retries a configuration or handshake step,
+# and expiry is a hard failure with diagnostics, never a
+# pass. SE_WAIT_DEADLINE (seconds) may override the bound.
+SE_WAIT_DEADLINE=${SE_WAIT_DEADLINE:-900}
+se_deadline=$(( $(date +%s) + SE_WAIT_DEADLINE ))
 se_ready=0
-for _ in $(seq 1 30); do
-  if timeout 10 "$SE_DIR/vpncmd" localhost /SERVER /CMD OpenVpnGet </dev/null >"$WORK/se-openvpnget.log" 2>&1; then
-    se_ready=1; break
+se_attempt=0
+while :; do
+  se_attempt=$((se_attempt + 1))
+  if timeout 10 "$SE_DIR/vpncmd" 127.0.0.1 /SERVER /CMD OpenVpnGet </dev/null >"$WORK/se-openvpnget.log" 2>&1; then
+    se_ready=1
+    echo "RIG_SOFTETHER_READY attempts=$se_attempt"
+    break
   fi
-  sleep 2
+  if [ "$(date +%s)" -ge "$se_deadline" ]; then
+    echo "RIG_FATAL=SoftEther admin interface not ready within ${SE_WAIT_DEADLINE}s ($se_attempt probes)"
+    break
+  fi
+  if [ $((se_attempt % 6)) = "0" ]; then
+    p443=closed; p5555=closed
+    se_port_open 443 && p443=open
+    se_port_open 5555 && p5555=open
+    echo "RIG_WAITING=softether admin interface attempt=$se_attempt tcp443=$p443 tcp5555=$p5555"
+  fi
+  sleep 5
 done
 gate SOFTETHER_UP "$se_ready"
-[ "$se_ready" = "1" ] || { echo "RIG_FATAL=SoftEther did not come up"; exit 2; }
+if [ "$se_ready" != "1" ]; then
+  se_diag
+  echo "RIG_FATAL=SoftEther did not come up"
+  exit 2
+fi
 
-vpncmd() { timeout 30 "$SE_DIR/vpncmd" localhost /SERVER "$@" </dev/null 2>&1; }
+vpncmd() { timeout 30 "$SE_DIR/vpncmd" 127.0.0.1 /SERVER "$@" </dev/null 2>&1; }
 # vpncmd parses any token starting with '/' as a switch, so a
 # file argument must never be an absolute POSIX path: run the
 # file-taking commands from $WORK with bare relative names.
-vpncmd_file() { (cd "$WORK" && timeout 30 "$SE_DIR/vpncmd" localhost /SERVER "$@" </dev/null 2>&1); }
+vpncmd_file() { (cd "$WORK" && timeout 30 "$SE_DIR/vpncmd" 127.0.0.1 /SERVER "$@" </dev/null 2>&1); }
 
 note "configure SoftEther hub (VPN Gate shape)"
 vpncmd /CMD OpenVpnEnable yes > "$WORK/se-cfg-openvpn.log" 2>&1
@@ -151,7 +217,7 @@ if [ ! -f "$WORK/client-cert.pem" ]; then
 fi
 vpncmd_file /HUB:DEFAULT /CMD CAAdd client-cert.pem > "$WORK/se-cfg-caadd.log" 2>&1
 vpncmd /HUB:DEFAULT /CMD UserCreate VPNGateClientCert /GROUP:none /REALNAME:none /NOTE:none > "$WORK/se-cfg-user.log" 2>&1
-printf 'VPNGateClientCert\n\n' | timeout 30 "$SE_DIR/vpncmd" localhost /SERVER /HUB:DEFAULT /CMD UserSignedSet VPNGateClientCert > "$WORK/se-cfg-signed.log" 2>&1
+printf 'VPNGateClientCert\n\n' | timeout 30 "$SE_DIR/vpncmd" 127.0.0.1 /SERVER /HUB:DEFAULT /CMD UserSignedSet VPNGateClientCert > "$WORK/se-cfg-signed.log" 2>&1
 vpncmd /HUB:DEFAULT /CMD SecureNatEnable > "$WORK/se-cfg-nat.log" 2>&1
 auth_type=$(vpncmd /HUB:DEFAULT /CMD UserGet VPNGateClientCert | grep -i "Auth Type" | grep -ci "Signed Certificate" || true)
 hub_ok=1
@@ -159,6 +225,19 @@ for f in se-cfg-cert se-cfg-caadd se-cfg-signed; do
   grep -q "completed successfully" "$WORK/$f.log" || hub_ok=0
 done
 [ "$auth_type" -ge 1 ] || hub_ok=0
+if [ "$hub_ok" != "1" ]; then
+  # A configuration step failed: leave the per-step evidence
+  # and the server's live state in the step log and the
+  # artifacts so the next failure is locatable from the run
+  # alone (previously only the last readiness probe's output
+  # survived). The gate below still records the failure.
+  echo "== SoftEther hub configuration FAILED; per-step logs and server state follow =="
+  for f in se-cfg-openvpn se-cfg-cert se-cfg-caadd se-cfg-user se-cfg-signed se-cfg-nat; do
+    echo "--- $f.log (tail) ---"
+    tail -n 15 "$WORK/$f.log" 2>/dev/null || echo "(missing)"
+  done
+  se_diag
+fi
 gate SOFTETHER_HUB_CONFIG "$hub_ok"
 
 # ---------------------------------------------------------------
