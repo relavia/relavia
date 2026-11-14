@@ -90,6 +90,37 @@ runRowCheck）。poll timeout 本身的剩余首位嫌疑为我方
 原生构建的运行时差量（静态审计不可见），裁决实验：
 同机同服同 Wi-Fi 用 OpenVPN Connect 导入官方 .ovpn
 对打比对日志（诊断 §8.5）。〕
+〔2026-11-14 深夜 回环握手台更新（详见诊断 §9）：
+同机对打已跑（官方应用 18:42 对 .209 成功；我方
+19:43 越过 poll timeout、TLS/OCC/Peer Info 均达，
+卡在 Peer Info 后 35 秒无 PUSH）。决定性回环台落
+地（CI 作业 openvpn3-loopback，脚本
+android/openvpn3/rig/run-rig.sh）：生产 SWIG 核心
+（同钉版源码与构建胶）对 SoftEther 本体（VPN Gate
+同形状：共享证书 + CN 用户 + SecureNAT）完整会话
+成立并与服务器侧 L3 会话日志互证，对照组（真
+OpenVPN 2.6.19 服务端）亦通过，首包与桌面
+openvpn 2.6.19 逐字节相同（除随机 session id）——
+「核心方言/首包被 SoftEther 静默丢弃」证伪。台上
+查实并已修两个我方真实缺陷：① Ovpn3Client 缺
+tun_builder_set_remote_address 覆写（核心无条件调
+用、默认返回 false 即致命——任何熬过握手的会话都
+会死在 TUN 建立，修复前台上实证 TUN_SETUP_FAILED）；
+② Peer Info 的 IV_CIPHERS 缺 CBC（核心默认只启用
+AEAD 数据密码；池子服务器只会 AES-128-CBC，官方
+应用广告含 CBC 居首）——已按核心自身开关
+enableNonPreferredDCAlgorithms 在 Ovpn3Client 启
+用，广告与官方同形且回环回归全过；性质界定：修复
+前广告在 SoftEther 4.44/4.38 上亦能完成（克隆走
+OCC 回退），本项为差量对齐、非回环复现的故障修
+复，是否为 .209 卡点根因待修复包真机复测裁决。
+版本复现尝试均负：4.38 修复前后均通过；4.29 出现
+与本案无关的 AUTH_FAILED（克隆误分类证书认证，
+桌面客户端同台同果，属其 TLS 1.3 证书提取缺陷）。
+顺带落地失败字节计数诊断（会话未连上时把核心
+transport 字节/包计数写入服务日志）。**公网实握
+（L5）仍未达成，本条仍不得勾掉**；下一裁决证据为
+含上述修复的测试包真机复测。〕
 仍未完成：审计修复包真机复测（待用户）、公网实握
 （L5，Step 20 门）、安卓端到端全项（计数/回收等）、
 诊断 §8.5 的同机对打裁决实验。来源：

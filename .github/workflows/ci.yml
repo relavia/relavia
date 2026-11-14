@@ -136,6 +136,40 @@ jobs:
             android/app/src/main/java/net/openvpn/ovpn3
           if-no-files-found: error
 
+  openvpn3-loopback:
+    name: openvpn3 (loopback handshake rig vs SoftEther + OpenVPN controls)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+      - name: Install rig dependencies
+        # The rig builds the production core in its host
+        # variant against system libraries (the spike's host
+        # recipe), runs a real SoftEther VPN Server and a
+        # genuine OpenVPN 2.6 server on loopback, and drives
+        # the core with a production-rendered profile. See
+        # android/openvpn3/rig/run-rig.sh and
+        # docs/真机连接失败诊断-2026-11-14.md §8.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y swig cmake ninja-build openvpn \
+            libasio-dev libfmt-dev libjsoncpp-dev liblz4-dev libxxhash-dev libssl-dev
+      - name: Run the loopback handshake rig
+        run: ./android/openvpn3/rig/run-rig.sh
+      - name: Upload rig logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relavia-openvpn3-rig-logs
+          path: rig-out/
+          if-no-files-found: ignore
+
   android:
     name: android (cross-compile gate / libbox AAR / merged APK / gio logic APK)
     needs: openvpn3-android

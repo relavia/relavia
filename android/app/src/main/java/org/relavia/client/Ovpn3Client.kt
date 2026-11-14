@@ -36,6 +36,8 @@ class Ovpn3Client(private val host: Ovpn3TunHost) : ClientAPI_OpenVPNClient() {
         var dnsServers = mutableListOf<String>()
         var rerouteIpv4: Boolean = false
         var rerouteIpv6: Boolean = false
+        var remoteAddress: String = ""          // server address the core reports
+        var remoteIpv6: Boolean = false
     }
 
     private val spec = TunSpec()
@@ -56,6 +58,22 @@ class Ovpn3Client(private val host: Ovpn3TunHost) : ClientAPI_OpenVPNClient() {
     fun runSession(profile: String, username: String, password: String) {
         val config = ClientAPI_Config()
         config.content = profile
+        // Advertise and allow the non-AEAD data ciphers (the
+        // CBC family) alongside the preferred AEAD ones. The
+        // core's default (ConfigCommon in ovpncli.hpp) enables
+        // only "preferred" algorithms — AES-GCM and
+        // ChaCha20-Poly1305 — which also keeps CBC out of the
+        // IV_CIPHERS line in our Peer Info. The public pool's
+        // servers are SoftEther OpenVPN clones whose data
+        // channel speaks only AES-128-CBC (it is what their
+        // own exported profiles ask for, and what the official
+        // client advertises first in IV_CIPHERS); a client
+        // that does not advertise CBC can be left waiting for
+        // a PUSH_REPLY that never comes. This switch is the
+        // core's own documented compatibility knob, verified
+        // on the loopback rig against a real SoftEther server
+        // (docs/真机连接失败诊断-2026-11-14.md §8).
+        config.enableNonPreferredDCAlgorithms = true
         val eval = eval_config(config)
         if (eval.error) {
             Libboxbind.notifyOvpn3Event("PROFILE_ERROR", eval.message ?: "profile rejected", true)
@@ -72,6 +90,24 @@ class Ovpn3Client(private val host: Ovpn3TunHost) : ClientAPI_OpenVPNClient() {
             }
         }
         val status = connect()
+        if (!connected) {
+            // The session ended without ever connecting. Leave
+            // the core's transport byte counters in the service
+            // log before anything else is torn down: they are
+            // the cheapest discriminator the next diagnosis
+            // gets — bytes_out == 0 means our packets never
+            // left, bytes_in == 0 with bytes_out > 0 means the
+            // server (or the path) never answered a single one.
+            try {
+                val stats = transport_stats()
+                Libboxbind.notifyOvpn3Log(
+                    "ovpn3 stats on failure: bytes_in=${stats.bytesIn} bytes_out=${stats.bytesOut}" +
+                        " packets_in=${stats.packetsIn} packets_out=${stats.packetsOut}",
+                )
+            } catch (e: Exception) {
+                Libboxbind.notifyOvpn3Log("ovpn3 stats on failure: unavailable (${e.message})")
+            }
+        }
         if (status.error && !connected) {
             // connect() returning an error before CONNECTED:
             // surface it as a fatal event so the pending Go
@@ -114,6 +150,26 @@ class Ovpn3Client(private val host: Ovpn3TunHost) : ClientAPI_OpenVPNClient() {
     // --- TunBuilder callbacks ---------------------------------
 
     override fun tun_builder_new(): Boolean = true
+
+    override fun tun_builder_set_remote_address(address: String, ipv6: Boolean): Boolean {
+        // TunProp::configure_builder calls this unconditionally
+        // once the server address is known and treats a false
+        // return as fatal (tun_prop_error, TUN_SETUP_FAILED).
+        // TunBuilderBase's default returns false, so without
+        // this override every session that survived the
+        // handshake died here — found on the loopback rig
+        // against a real SoftEther server, where the core
+        // logged "Session is ACTIVE", processed the push, and
+        // then failed with "tun_builder_set_remote_address
+        // failed" (docs/真机连接失败诊断-2026-11-14.md §8).
+        // The address is recorded for the host; no route work
+        // is needed for the transport itself, whose sockets
+        // are already kept out of the tunnel by socket_protect
+        // (VpnService.protect).
+        spec.remoteAddress = address
+        spec.remoteIpv6 = ipv6
+        return true
+    }
 
     override fun tun_builder_set_session_name(name: String): Boolean {
         spec.sessionName = name
