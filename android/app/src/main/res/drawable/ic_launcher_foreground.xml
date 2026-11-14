@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Relavia launcher foreground: the single-eye mark ("the eye
+  through which you see a different world"), drawn white on
+  transparent over the brand-blue background
+  (values/colors.xml: ic_launcher_background).
+
+  The geometry mirrors the product UI's eye mark (app/ui
+  theme.go eyeMark: two quadratic lids, a pupil ring and the
+  center dot), scaled into the adaptive-icon safe zone of
+  the 108dp viewport so circle/squircle masks never clip
+  the lids.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M24.9,54 Q54,13.7 83,54 Q54,94.3 24.9,54 Z"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M44,54 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0"
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5" />
+    <path
+        android:pathData="M50.4,54 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0"
+        android:fillColor="#FFFFFF" />
+</vector>

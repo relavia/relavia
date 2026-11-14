@@ -45,6 +45,21 @@ import (
 //     the VPN Gate plugin records for itself in Step 14).
 //   - service/win-sys/tap-sleep/show-* (Windows service control):
 //     the process is a child of the adapter, never a service.
+//
+// Retry discipline (2026-11-14 real-device fix batch, see
+// docs/真机连接失败诊断-2026-11-14.md §6 item 3): a server-sent
+// "resolv-retry infinite" is NOT stripped but rewritten to a
+// bounded count (boundedResolvRetry) in buildPassthrough. The
+// diagnosis established that the directive did not cause the
+// connection failures (the OpenVPN 3 core ignores it and the
+// desktop adapter's connect timeout is the real bound); the
+// rewrite exists so no rendered profile can retry name
+// resolution forever when run under a supervisor that honors
+// it — one of the ingredients of the "cannot be turned off"
+// experience on the device. No other directive changes: the
+// rendered set otherwise stays identical to the source config,
+// and the rewrite is recorded in builtConfig.rewritten like
+// every other one (tests list it explicitly).
 var stripDirectives = map[string]bool{
 	"management": true, "management-log-cache": true,
 	"management-forget-disconnect": true, "management-query-passwords": true,
@@ -108,6 +123,20 @@ func firstToken(line string) string {
 	return strings.ToLower(f[0])
 }
 
+// boundedResolvRetry is the finite retry count a server-sent
+// "resolv-retry infinite" is rewritten to (see the retry
+// discipline note at stripDirectives). Two retries are enough
+// for a transient resolver hiccup; the session's real bound is
+// the adapter/engine connect timeout, not name resolution.
+const boundedResolvRetry = "2"
+
+// isInfiniteResolvRetry reports whether a resolv-retry line
+// asks for unbounded retries ("resolv-retry infinite").
+func isInfiniteResolvRetry(trimmed string) bool {
+	f := strings.Fields(trimmed)
+	return len(f) >= 2 && strings.EqualFold(f[1], "infinite")
+}
+
 // buildConfig renders the session configuration for a spec node.
 func buildConfig(n *specnode.Node, bo buildOptions) (*builtConfig, error) {
 	if n == nil || n.OpenVPN == nil {
@@ -164,6 +193,14 @@ func buildPassthrough(n *specnode.Node, bo buildOptions) (*builtConfig, error) {
 		switch {
 		case stripDirectives[tok]:
 			bc.rewritten = append(bc.rewritten, tok)
+			continue
+		case tok == "resolv-retry" && isInfiniteResolvRetry(trimmed):
+			// Retry discipline: an unbounded server-sent
+			// retry directive becomes a bounded one (see
+			// the note at stripDirectives). Finite values
+			// pass through untouched.
+			out = append(out, "resolv-retry "+boundedResolvRetry)
+			bc.rewritten = append(bc.rewritten, "resolv-retry(infinite->"+boundedResolvRetry+")")
 			continue
 		case tok == "auth-user-pass" && len(strings.Fields(trimmed)) > 1:
 			// A file argument would point at a file the adapter

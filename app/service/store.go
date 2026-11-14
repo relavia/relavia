@@ -46,6 +46,17 @@ type NodeRecord struct {
 	// record so it survives restarts. It carries no ranking or
 	// selection semantics.
 	Favorite bool `json:"favorite,omitempty"`
+	// SourcePingMs / SourceScore are the SOURCE-REPORTED list
+	// figures for plugin-sourced nodes (VPN Gate CSV Ping /
+	// Score columns): the list's own measurements, never ours,
+	// recorded at refresh so the one-tap chain can rank
+	// candidates by them (2026-11-14 fix batch; the plugin has
+	// always parsed them into Catalog.Meta — the service layer
+	// used to drop them). Zero means the source reported
+	// nothing usable. They never appear in the UI as measured
+	// latency; ranking only.
+	SourcePingMs int64 `json:"sourcePingMs,omitempty"`
+	SourceScore  int64 `json:"sourceScore,omitempty"`
 }
 
 // SubscriptionRecord is the stored registration of one imported
@@ -399,6 +410,15 @@ func (s *Store) AddNode(n *specnode.Node, warnings []string) {
 			// re-import; re-establishing it is the source
 			// layer's job (probes / handshake tests).
 			rec.Admission = s.doc.Nodes[i].Admission
+			// Preserve the user's star across re-import: a
+			// pool refresh replaces the record wholesale and
+			// must not silently un-star the user's nodes.
+			rec.Favorite = s.doc.Nodes[i].Favorite
+			// Preserve the source-reported list figures; the
+			// refresh path re-stamps them via SetSourceMeta
+			// right after AddNode.
+			rec.SourcePingMs = s.doc.Nodes[i].SourcePingMs
+			rec.SourceScore = s.doc.Nodes[i].SourceScore
 			// Preserve the freshest handshake result across re-import.
 			if rec.Node.LastTest == nil {
 				rec.Node.LastTest = s.doc.Nodes[i].Node.LastTest
@@ -462,6 +482,22 @@ func (s *Store) SetAdmission(id string, level string) bool {
 	for i := range s.doc.Nodes {
 		if s.doc.Nodes[i].Node.ID == id {
 			s.doc.Nodes[i].Admission = level
+			return true
+		}
+	}
+	return false
+}
+
+// SetSourceMeta records the source-reported list figures
+// (ping / score) for a node at refresh time (see
+// NodeRecord.SourcePingMs). Reports whether the node exists.
+func (s *Store) SetSourceMeta(id string, pingMs, score int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.doc.Nodes {
+		if s.doc.Nodes[i].Node.ID == id {
+			s.doc.Nodes[i].SourcePingMs = pingMs
+			s.doc.Nodes[i].SourceScore = score
 			return true
 		}
 	}

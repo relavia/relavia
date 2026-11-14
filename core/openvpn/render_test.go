@@ -35,6 +35,28 @@ func TestRenderProfilePassthrough(t *testing.T) {
 	if !strings.Contains(rp.Text, "remote 203.0.113.7 443") {
 		t.Errorf("rendered profile lost the remote line:\n%s", rp.Text)
 	}
+	// The retry-discipline rewrite is shared with the process
+	// adapter (same builder): the sample body's unbounded
+	// resolv-retry arrives bounded here too, listed in
+	// Rewritten — and it is the ONLY retry-class change: every
+	// other session directive of the source body survives
+	// verbatim (diagnosis §3 zero-diff, amended by exactly this
+	// one documented rewrite).
+	if strings.Contains(rp.Text, "resolv-retry infinite") {
+		t.Errorf("rendered profile kept unbounded resolv-retry:\n%s", rp.Text)
+	}
+	if !strings.Contains(rp.Text, "\nresolv-retry "+boundedResolvRetry+"\n") {
+		t.Errorf("rendered profile missing bounded resolv-retry:\n%s", rp.Text)
+	}
+	found := false
+	for _, r := range rp.Rewritten {
+		if r == "resolv-retry(infinite->"+boundedResolvRetry+")" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Rewritten does not list the resolv-retry rewrite: %v", rp.Rewritten)
+	}
 }
 
 func TestRenderProfileAuthWithoutCredentials(t *testing.T) {

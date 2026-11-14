@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -27,6 +28,12 @@ var (
 	ErrNoNodeSelected = errors.New("service: no node selected")
 	ErrNoTestedNode   = errors.New("service: no successfully tested node available")
 	ErrNoEngine       = errors.New("service: no kernel engine configured")
+	// ErrNoNodeResponded reports a one-tap chain that tried
+	// its bounded candidate set and every attempt failed in
+	// the no-response class (timeout / silence from the
+	// server). The UI maps it to its own localized line; the
+	// per-attempt real reasons are in the log.
+	ErrNoNodeResponded = errors.New("service: no candidate node responded")
 )
 
 // NodeView is one node as the UI presents it: the record plus its
@@ -42,6 +49,16 @@ type NodeView struct {
 	Admission string
 	// Favorite mirrors NodeRecord.Favorite (the user's star).
 	Favorite bool
+	// SourcePingMs / SourceScore mirror the record's
+	// source-reported list figures (ranking inputs for the
+	// one-tap chain; never displayed as measured latency).
+	SourcePingMs int64
+	SourceScore  int64
+	// Reach is the node's latest fast TCP reachability check
+	// result from this process (nil when never fast-checked).
+	// It is a latency/reachability signal only — never a
+	// handshake claim (see fastcheck.go).
+	Reach *ReachResult
 }
 
 // LogBuffer is a bounded in-memory ring of diagnostic log lines
@@ -51,7 +68,33 @@ type LogBuffer struct {
 	mu    sync.Mutex
 	lines []string
 	max   int
+	// foldSlots tracks the most recent foldable lines (see
+	// AddFold) by their distance from the end of lines, so a
+	// repeat can bump the counter on its first occurrence
+	// instead of appending another copy.
+	foldSlots []foldSlot
 }
+
+// foldSlot is one foldable line's bookkeeping: the line's key,
+// its first-occurrence rendering (the repeat counter suffix is
+// applied on top of it), how far it currently sits from the
+// end of the buffer, and how many times it has occurred.
+type foldSlot struct {
+	key     string
+	base    string
+	fromEnd int
+	count   int
+}
+
+// maxFoldSlots bounds how many distinct foldable lines are
+// tracked at once (the kernel's retry chatter cycles through
+// two or three messages; four leaves headroom).
+const maxFoldSlots = 4
+
+// maxFoldDistance forgets a foldable line once this many newer
+// lines separate it from the end: a repeat after that is a new
+// episode, not the same retry loop, and earns its own line.
+const maxFoldDistance = 64
 
 // NewLogBuffer creates a buffer holding at most max lines.
 func NewLogBuffer(max int) *LogBuffer {
@@ -61,13 +104,66 @@ func NewLogBuffer(max int) *LogBuffer {
 	return &LogBuffer{max: max}
 }
 
+// appendLocked appends one line and applies the size bound.
+// Caller holds mu.
+func (b *LogBuffer) appendLocked(line string) {
+	b.lines = append(b.lines, line)
+	if len(b.lines) > b.max {
+		b.lines = append([]string{}, b.lines[len(b.lines)-b.max:]...)
+	}
+}
+
+// shiftSlotsLocked ages every fold slot by one appended line
+// and forgets slots that fell out of the fold window or whose
+// line was trimmed away. Caller holds mu.
+func (b *LogBuffer) shiftSlotsLocked() {
+	kept := b.foldSlots[:0]
+	for _, s := range b.foldSlots {
+		s.fromEnd++
+		if s.fromEnd <= maxFoldDistance && s.fromEnd < len(b.lines) {
+			kept = append(kept, s)
+		}
+	}
+	b.foldSlots = kept
+}
+
 // Add appends one line (timestamped by the caller-facing format).
 func (b *LogBuffer) Add(line string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.lines = append(b.lines, line)
-	if len(b.lines) > b.max {
-		b.lines = append([]string{}, b.lines[len(b.lines)-b.max:]...)
+	b.appendLocked(line)
+	b.shiftSlotsLocked()
+}
+
+// AddFold appends a foldable line: when the same key was seen
+// recently — consecutively OR alternating with other foldable
+// lines, the shape of the OpenVPN core's poll-retry chatter —
+// the repeat only bumps a "(×N)" counter on the first
+// occurrence instead of flooding the buffer with copies. Only
+// high-volume informational chatter goes through here (the
+// service routes kernel [info] lines); failures always use
+// Add and land verbatim, one line each.
+func (b *LogBuffer) AddFold(key, line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.foldSlots {
+		if b.foldSlots[i].key != key {
+			continue
+		}
+		s := &b.foldSlots[i]
+		idx := len(b.lines) - 1 - s.fromEnd
+		if idx < 0 || idx >= len(b.lines) {
+			break // slot outlived its line; fall through to append
+		}
+		s.count++
+		b.lines[idx] = fmt.Sprintf("%s (×%d)", s.base, s.count)
+		return
+	}
+	b.appendLocked(line)
+	b.shiftSlotsLocked()
+	b.foldSlots = append(b.foldSlots, foldSlot{key: key, base: line, count: 1})
+	if len(b.foldSlots) > maxFoldSlots {
+		b.foldSlots = append([]foldSlot{}, b.foldSlots[len(b.foldSlots)-maxFoldSlots:]...)
 	}
 }
 
@@ -83,6 +179,7 @@ func (b *LogBuffer) Clear() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.lines = nil
+	b.foldSlots = nil
 }
 
 // Service wires the store, the kernel engine and the log buffer.
@@ -98,6 +195,29 @@ type Service struct {
 	// for the settings fallback line (see AutoSelectAndConnect).
 	// Guarded by mu.
 	lastAuto autoSelectOutcome
+
+	// The cancellable-operation registry (BeginOp /
+	// CancelActiveOp): the UI registers its long-running
+	// chains (one-tap connect, check-all, manual connect) so
+	// Disconnect can stop EVERYTHING — the chain context and
+	// with it every loop that could start another session —
+	// not just the session that happens to be in flight. This
+	// is the fix for the 2026-11-14 "turned it off and it
+	// kept reconnecting itself" report: previously Disconnect
+	// stopped only the current probe session and the chain
+	// immediately started the next one.
+	opMu     sync.Mutex
+	opCancel context.CancelFunc
+	opGen    uint64
+
+	// Fast-check state (fastcheck.go): in-memory reachability
+	// results of this process, plus the dialer and per-node
+	// timeout the checks run with (fields so tests can
+	// substitute deterministic dialers, like vgProber below).
+	reachMu          sync.Mutex
+	reach            map[string]*ReachResult
+	tcpDial          func(ctx context.Context, network, address string) (net.Conn, error)
+	fastCheckTimeout time.Duration
 
 	// VPN Gate pool source (vpngate.go). vgProber is the TCP
 	// admission prober used at refresh; nil means the plugin's
@@ -116,6 +236,7 @@ func New(store *Store, engine Engine) *Service {
 		engine:     engine,
 		logs:       NewLogBuffer(500),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
+		reach:      map[string]*ReachResult{},
 	}
 }
 
@@ -128,7 +249,68 @@ func (s *Service) Logs() *LogBuffer { return s.logs }
 // OnKernelLog is the sink to hand to the engine (kernel log lines
 // for the local log view).
 func (s *Service) OnKernelLog(level, message string) {
-	s.logs.Add(fmt.Sprintf("%s [%s] %s", time.Now().Format("15:04:05"), level, message))
+	line := fmt.Sprintf("%s [%s] %s", time.Now().Format("15:04:05"), level, message)
+	if level == "info" {
+		// Kernel [info] chatter repeats the same lines while
+		// a session retries (the OpenVPN core's poll-timeout
+		// loop filled the device's whole log page in the
+		// 2026-11-14 test): fold repeats into a counter on
+		// the first occurrence. Every other level — warnings
+		// and every failure — lands verbatim, one line each,
+		// with its real reason.
+		s.logs.AddFold("kernel|"+message, line)
+		return
+	}
+	s.logs.Add(line)
+}
+
+// BeginOp registers a new cancellable operation (a one-tap
+// chain, a group check, a manual connect) and returns its
+// context. Registering supersedes any operation still
+// registered: the previous one's context is canceled, because
+// a new user action replaces the old chain, never runs beside
+// it. The returned release function unregisters (and cancels)
+// this operation when it ends; callers defer it.
+func (s *Service) BeginOp() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.opMu.Lock()
+	s.opGen++
+	gen := s.opGen
+	prev := s.opCancel
+	s.opCancel = cancel
+	s.opMu.Unlock()
+	if prev != nil {
+		prev()
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			s.opMu.Lock()
+			if s.opGen == gen {
+				s.opCancel = nil
+			}
+			s.opMu.Unlock()
+			cancel()
+		})
+	}
+	return ctx, release
+}
+
+// CancelActiveOp cancels the registered operation's context,
+// if any. It is the chain half of Disconnect's "stop
+// everything" semantics: canceling the context stops the
+// chain's probe/attempt loops from starting any further
+// session; the engine stop that follows ends the session in
+// flight.
+func (s *Service) CancelActiveOp() {
+	s.opMu.Lock()
+	c := s.opCancel
+	s.opCancel = nil
+	s.opGen++
+	s.opMu.Unlock()
+	if c != nil {
+		c()
+	}
 }
 
 func (s *Service) logf(format string, args ...any) {
@@ -149,16 +331,25 @@ func (s *Service) Nodes(group string) []NodeView {
 		if group != AllGroups && rec.Node.Group != group {
 			continue
 		}
-		out = append(out, NodeView{
-			Record:    rec,
-			Weak:      WeakEncryption(rec.Node),
-			Insecure:  InsecureSkipVerify(rec.Node),
-			VPNGate:   IsVPNGateNode(rec.Node),
-			Admission: rec.Admission,
-			Favorite:  rec.Favorite,
-		})
+		out = append(out, s.nodeView(rec))
 	}
 	return out
+}
+
+// nodeView assembles the UI view of one record, including the
+// session-local fast-check result when one exists.
+func (s *Service) nodeView(rec NodeRecord) NodeView {
+	return NodeView{
+		Record:       rec,
+		Weak:         WeakEncryption(rec.Node),
+		Insecure:     InsecureSkipVerify(rec.Node),
+		VPNGate:      IsVPNGateNode(rec.Node),
+		Admission:    rec.Admission,
+		Favorite:     rec.Favorite,
+		SourcePingMs: rec.SourcePingMs,
+		SourceScore:  rec.SourceScore,
+		Reach:        s.reachResult(rec.Node.ID),
+	}
 }
 
 // AllGroups is the pseudo-group key selecting every node.
@@ -170,14 +361,7 @@ func (s *Service) NodeByID(id string) (NodeView, bool) {
 	if !ok {
 		return NodeView{}, false
 	}
-	return NodeView{
-		Record:    rec,
-		Weak:      WeakEncryption(rec.Node),
-		Insecure:  InsecureSkipVerify(rec.Node),
-		VPNGate:   IsVPNGateNode(rec.Node),
-		Admission: rec.Admission,
-		Favorite:  rec.Favorite,
-	}, true
+	return s.nodeView(rec), true
 }
 
 // SetNodeFavorite stars or unstars a node and persists the
@@ -359,22 +543,38 @@ func (s *Service) TestNode(ctx context.Context, id string) (*kernel.HandshakeRes
 	if err != nil {
 		return nil, err
 	}
-	lt := &specnode.LastTest{At: res.TestedAt.UTC().Format(time.RFC3339), OK: res.OK}
 	if res.OK {
-		ms := float64(res.Latency.Microseconds()) / 1000.0
-		lt.LatencyMs = &ms
-	} else if res.Error != nil {
-		lt.Error = string(res.Error.Kind)
-	}
-	s.store.SetLastTest(id, lt)
-	if res.OK && IsVPNGateNode(rec.Node) && rec.Node.Protocol == specnode.ProtocolOpenVPN {
-		// A real OpenVPN handshake through the app's dispatch
-		// is exactly the plugin's handshake-verified admission
-		// evidence — record it (refreshes never downgrade it).
-		s.store.SetAdmission(id, vpngate.ProbeLevelHandshakeVerified)
+		s.recordHandshakeSuccess(rec, res.TestedAt, res.Latency)
+	} else {
+		lt := &specnode.LastTest{At: res.TestedAt.UTC().Format(time.RFC3339), OK: false}
+		if res.Error != nil {
+			lt.Error = string(res.Error.Kind)
+		}
+		s.store.SetLastTest(id, lt)
 	}
 	_ = s.store.Save()
 	return res, nil
+}
+
+// recordHandshakeSuccess stores a successful REAL handshake
+// outcome on a node: the LastTest latency record (the ranking
+// input of auto-select and the "picked for you" shortlist) and,
+// for VPN Gate OpenVPN nodes, the handshake-verified admission
+// upgrade — a real OpenVPN handshake through the app's dispatch
+// is exactly the plugin's handshake-verified admission evidence
+// (refreshes never downgrade it). Callers: TestNode (a probe
+// session) and the one-tap chain (a connect IS a handshake;
+// its measured duration is the honest latency).
+func (s *Service) recordHandshakeSuccess(rec NodeRecord, at time.Time, latency time.Duration) {
+	ms := float64(latency.Microseconds()) / 1000.0
+	s.store.SetLastTest(rec.Node.ID, &specnode.LastTest{
+		At:        at.UTC().Format(time.RFC3339),
+		OK:        true,
+		LatencyMs: &ms,
+	})
+	if IsVPNGateNode(rec.Node) && rec.Node.Protocol == specnode.ProtocolOpenVPN {
+		s.store.SetAdmission(rec.Node.ID, vpngate.ProbeLevelHandshakeVerified)
+	}
 }
 
 // TestGroup tests every node of a group sequentially (group ""
@@ -489,8 +689,17 @@ func (s *Service) LastAutoSelect() (nodeName string, fellBack bool, ok bool) {
 	return s.lastAuto.nodeName, s.lastAuto.fellBack, s.lastAuto.ok
 }
 
-// Disconnect stops the kernel (idempotent at the adapter).
+// Disconnect stops EVERYTHING (2026-11-14 fix batch): first
+// the registered operation chain is canceled, so its probe /
+// attempt loops cannot start another session behind this
+// call; then the engine itself is stopped, ending the session
+// in flight. Before this change Disconnect stopped only the
+// in-flight session and a running one-tap chain immediately
+// started the next node — the device report "I turned it off
+// and it kept reconnecting by itself". Engine Stop is
+// idempotent at the adapter.
 func (s *Service) Disconnect(ctx context.Context) error {
+	s.CancelActiveOp()
 	if s.engine == nil {
 		return ErrNoEngine
 	}

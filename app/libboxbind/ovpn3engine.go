@@ -156,6 +156,18 @@ func (e *ovpn3Engine) start(ctx context.Context, n *specnode.Node) error {
 		e.setFailed(android.ErrPermissionDenied)
 		return android.ErrPermissionDenied
 	}
+	// The consent wait above is detached on purpose (a human
+	// reading the dialog is not the caller's deadline), but a
+	// caller that gave up meanwhile — the one-tap chain
+	// canceled by Disconnect — must not get a session launched
+	// behind its back (2026-11-14 fix batch: a real cancel
+	// for in-flight connects).
+	if err := ctx.Err(); err != nil {
+		kerr := kernel.NewError(kernel.KindCanceled, "Start",
+			"the start was canceled before the session launched", err)
+		e.setFailed(kerr)
+		return kerr
+	}
 
 	profile, err := openvpn.RenderProfile(n)
 	if err != nil {
@@ -180,7 +192,15 @@ func (e *ovpn3Engine) start(ctx context.Context, n *specnode.Node) error {
 	if bound <= 0 {
 		bound = openvpn.DefaultConnectTimeout
 	}
-	wctx, wcancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+	// The wait honors the caller's context (2026-11-14 fix
+	// batch): previously it was detached (WithoutCancel), so
+	// canceling a connect — Disconnect during the one-tap
+	// chain — could not interrupt a start until the full
+	// timeout burned down, one of the ingredients of "it
+	// keeps reconnecting by itself". The consent phase above
+	// stays detached; from here on the caller owns the clock
+	// together with the connect bound.
+	wctx, wcancel := context.WithTimeout(ctx, bound)
 	defer wcancel()
 	select {
 	case out := <-waiter:
@@ -199,6 +219,15 @@ func (e *ovpn3Engine) start(ctx context.Context, n *specnode.Node) error {
 	case <-wctx.Done():
 		_ = bridge.StopOvpn3Session()
 		e.clearWaiter(waiter)
+		if cerr := ctx.Err(); cerr != nil {
+			// Caller cancellation, not a server timeout:
+			// classify it as what it is so chains can tell
+			// "user said stop" from "server stayed silent".
+			kerr := kernel.NewError(kernel.KindCanceled, "Start",
+				"the start was canceled while waiting for the core", cerr)
+			e.setFailed(kerr)
+			return kerr
+		}
 		kerr := openvpn.WrapClassified(openvpn.CodeConnectTimeout,
 			kernel.NewError(kernel.KindTimeout, "Start",
 				"the OpenVPN core did not reach CONNECTED within the connect timeout", nil))

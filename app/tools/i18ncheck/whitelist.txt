@@ -80,6 +80,12 @@ import-file
 test-node
 
 # Service log stage label (internal identifier written to the
+# local diagnostic log by Service.LogFailure; the fast
+# reachability check's user-facing text comes from the node.*
+# pack entries).
+check-node
+
+# Service log stage label (internal identifier written to the
 # local diagnostic log by Service.LogFailure; the user-facing
 # text for the same failure comes from the err.* pack entries).
 vpngate-enable

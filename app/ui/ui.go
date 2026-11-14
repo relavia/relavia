@@ -37,6 +37,7 @@ import (
 	"gioui.org/widget/material"
 
 	"openproxy/core/kernel"
+	"openproxy/core/specnode"
 
 	"openproxy/app/android"
 	"openproxy/app/i18n"
@@ -85,6 +86,7 @@ type App struct {
 
 	// v3 first-screen and page controls.
 	heroBtn, heroRetryBtn, heroReasonBtn widget.Clickable
+	heroCancelBtn                        widget.Clickable
 	checkAllBtn, guideBtn, recBtn        widget.Clickable
 	detourBtn, searchClearBtn            widget.Clickable
 	riskLinkBtn, viewAllBtn, errStripBtn widget.Clickable
@@ -94,8 +96,11 @@ type App struct {
 	// expandedMethod is the import page's open method row
 	// (0 = none, 1..3 = links / subscription / file).
 	expandedMethod int
-	// menuOpenID is the node whose overflow strip is open.
-	menuOpenID string
+	// expandedRowID is the node whose inline action strip is
+	// expanded under its row (2026-11-14 ruling: tapping a
+	// row expands its actions right there; the old "…"
+	// overflow menu is gone).
+	expandedRowID string
 	// themeID caches the resolved palette id so the material
 	// theme is only re-synced when the palette changes.
 	themeID string
@@ -161,6 +166,10 @@ type App struct {
 	heroFailed     bool
 	autoPickedFlag bool
 	helpHint       string
+	// tryingName is the candidate the chain is currently
+	// attempting (hero progress line), set from the chain's
+	// stage callback. Guarded by mu.
+	tryingName string
 
 	trafficMu    chan struct{}
 	trafficStats *kernel.TrafficStats // last successful counter sample
@@ -169,7 +178,7 @@ type App struct {
 
 type rowButtons struct {
 	selectBtn, testBtn, delBtn, favBtn widget.Clickable
-	menuBtn, connBtn                   widget.Clickable
+	connBtn                            widget.Clickable
 }
 
 // New builds the shell around a service and translator.
@@ -364,8 +373,10 @@ func (a *App) handleClicks(gtx layout.Context) {
 		}
 	}
 	if a.disconnectBtn.Clicked(gtx) {
-		a.setAutoPicked(false)
-		a.runAsync("disconnect", func(ctx context.Context) error { return a.svc.Disconnect(ctx) })
+		a.stopAll()
+	}
+	if a.heroCancelBtn.Clicked(gtx) {
+		a.stopAll()
 	}
 	if a.heroBtn.Clicked(gtx) {
 		a.heroPrimaryAction()
@@ -379,8 +390,14 @@ func (a *App) handleClicks(gtx layout.Context) {
 	if a.checkAllBtn.Clicked(gtx) {
 		group := a.currentGroup()
 		a.runAsync("check-all", func(ctx context.Context) error {
-			_, err := a.svc.TestGroup(ctx, group)
-			return err
+			// The node page's check is the FAST reachability
+			// sweep now (2026-11-14 fix batch): full handshakes
+			// per node could never finish a ~99-node list.
+			// Results land per node; the sweep stopping early
+			// on cancellation is reported through the context
+			// so runAsync can treat it as the user's own stop.
+			a.svc.CheckGroupFast(ctx, group, a.invalidate)
+			return ctx.Err()
 		})
 	}
 	if a.guideBtn.Clicked(gtx) {
@@ -479,6 +496,24 @@ func (a *App) handleClicks(gtx layout.Context) {
 	}
 }
 
+// stopAll is the disconnect / cancel action: it does NOT go
+// through runAsync (whose busy gate would drop the click
+// exactly when a chain is running — the moment stopping
+// matters most). The service's Disconnect cancels the
+// registered operation chain AND stops the engine, so after
+// this call nothing can start another session on its own
+// (2026-11-14 fix batch; the chain goroutine observes the
+// cancellation and unwinds to idle without a failure state).
+func (a *App) stopAll() {
+	a.setAutoPicked(false)
+	go func() {
+		if err := a.svc.Disconnect(context.Background()); err != nil && !errors.Is(err, service.ErrNoEngine) {
+			a.svc.LogFailure("disconnect", err)
+		}
+		a.invalidate()
+	}()
+}
+
 // runAsync executes a service operation off the UI goroutine
 // and records its (localized) outcome. Every failure it
 // surfaces is ALSO written to the service's local log with its
@@ -486,6 +521,13 @@ func (a *App) handleClicks(gtx layout.Context) {
 // tells the user the details are in the log, so the log must
 // actually contain them — the broken error chain behind the
 // 2026-11-14 "empty log page" report.
+//
+// The operation runs on the service's cancellable-op context
+// (BeginOp): Disconnect cancels it, which is how the user
+// stops an in-flight connect or check. A cancellation is the
+// user's own action, not a failure: it sets no error banner
+// and writes no failure log line (the disconnect itself is
+// what the log records).
 func (a *App) runAsync(op string, fn func(ctx context.Context) error) {
 	a.mu.Lock()
 	if a.busy {
@@ -498,15 +540,18 @@ func (a *App) runAsync(op string, fn func(ctx context.Context) error) {
 	a.heroFailed = false
 	a.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		opCtx, release := a.svc.BeginOp()
+		defer release()
+		ctx, cancel := context.WithTimeout(opCtx, 90*time.Second)
 		defer cancel()
 		err := fn(ctx)
-		if err != nil {
+		canceled := errors.Is(err, context.Canceled)
+		if err != nil && !canceled {
 			a.svc.LogFailure(op, err)
 		}
 		a.mu.Lock()
 		a.busy = false
-		if err != nil {
+		if err != nil && !canceled {
 			a.errKey = ErrorKey(err)
 		}
 		a.mu.Unlock()
@@ -573,13 +618,17 @@ func (a *App) startOneTap() {
 	a.runHeroChain()
 }
 
-// runHeroChain runs the one-tap sequence on the existing
-// service chain — pool refresh (when consented), a real
-// availability check of every node, then auto-select +
-// connect — reporting its stage to the hero card. It mirrors
-// runAsync's bookkeeping but keeps failures on the hero
-// (with a retry) instead of the global error strip; failures
-// are still logged with their stage like every other op.
+// runHeroChain runs the one-tap sequence — pool refresh
+// (when consented), then the service's one-tap chain (ranked
+// candidates, fast pre-check, bounded real attempts) —
+// reporting its stage to the hero card. It mirrors runAsync's
+// bookkeeping but keeps failures on the hero (with a retry)
+// instead of the global error strip; failures are still
+// logged with their stage like every other op. The chain runs
+// on the cancellable-op context: Disconnect (the hero's
+// cancel button, the connected card's disconnect) cancels it,
+// and a user cancellation returns the hero to idle — it is
+// not a failure and is not presented as one.
 func (a *App) runHeroChain() {
 	a.mu.Lock()
 	if a.busy {
@@ -590,22 +639,27 @@ func (a *App) runHeroChain() {
 	a.errKey = ""
 	a.heroErr = nil
 	a.heroFailed = false
+	a.tryingName = ""
 	a.heroStage = stageCheck
 	if st := a.svc.VPNGateStatus(); st.Attached && st.ConsentState == service.VPNGateConsentAcknowledged {
 		a.heroStage = stageRefresh
 	}
 	a.mu.Unlock()
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		opCtx, release := a.svc.BeginOp()
+		defer release()
+		ctx, cancel := context.WithTimeout(opCtx, 5*time.Minute)
 		defer cancel()
 		err := a.heroChainSteps(ctx)
-		if err != nil {
+		canceled := errors.Is(err, context.Canceled)
+		if err != nil && !canceled {
 			a.svc.LogFailure("one-tap-connect", err)
 		}
 		a.mu.Lock()
 		a.busy = false
 		a.heroStage = stageNone
-		if err != nil {
+		a.tryingName = ""
+		if err != nil && !canceled {
 			a.heroErr = err
 			a.heroFailed = true
 		}
@@ -628,15 +682,38 @@ func (a *App) heroChainSteps(ctx context.Context) error {
 		}
 	}
 	a.setHeroStage(stageCheck)
-	if _, err := a.svc.TestGroup(ctx, service.AllGroups); err != nil {
-		return err
-	}
-	a.setHeroStage(stageConnect)
-	if _, err := a.svc.AutoSelectAndConnect(ctx, service.AllGroups); err != nil {
+	_, err := a.svc.OneTapConnect(ctx, service.AllGroups, func(stage service.OneTapStage, n *specnode.Node) {
+		switch stage {
+		case service.OneTapStageCheck:
+			a.setHeroStage(stageCheck)
+		case service.OneTapStageConnect:
+			a.setHeroStage(stageConnect)
+			if n != nil {
+				a.setTryingName(n.Name)
+			}
+		}
+	})
+	if err != nil {
 		return err
 	}
 	a.setAutoPicked(true)
 	return nil
+}
+
+// setTryingName records the candidate the chain is currently
+// attempting (hero progress line).
+func (a *App) setTryingName(name string) {
+	a.mu.Lock()
+	a.tryingName = name
+	a.mu.Unlock()
+	a.invalidate()
+}
+
+// tryingNameText snapshots the attempting candidate's name.
+func (a *App) tryingNameText() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.tryingName
 }
 
 // heroStage enumerates the one-tap chain's phases for the
@@ -872,6 +949,8 @@ func ErrorKey(err error) string {
 		return "android.vpn_permission_denied"
 	case errors.Is(err, service.ErrNoTestedNode):
 		return "err.no_tested_node"
+	case errors.Is(err, service.ErrNoNodeResponded):
+		return "err.no_response"
 	case errors.Is(err, service.ErrNoEngine):
 		return "err.platform_unavailable"
 	case errors.Is(err, service.ErrVPNGateConsentRequired):

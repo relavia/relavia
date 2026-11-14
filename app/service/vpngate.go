@@ -307,13 +307,22 @@ func (s *Service) RefreshVPNGate(ctx context.Context, force bool) (*VPNGateRefre
 	}
 	var targets []probeTarget
 	newIDs := map[string]bool{}
-	for _, pn := range cat.Nodes {
+	for i, pn := range cat.Nodes {
 		sn, err := toSpecNode(pn)
 		if err != nil {
 			s.logf("vpngate: node %s failed model conversion: %v", pn.ID, err)
 			continue
 		}
 		s.store.AddNode(sn, nil)
+		// Stamp the source-reported list figures (CSV Ping /
+		// Score, parsed by the plugin into Catalog.Meta —
+		// Meta[i] describes Nodes[i]). The one-tap chain
+		// ranks candidates by them; until now the service
+		// layer dropped them on the floor (2026-11-14 fix
+		// batch).
+		if i < len(cat.Meta) {
+			s.store.SetSourceMeta(sn.ID, cat.Meta[i].PingMsReported, cat.Meta[i].ScoreReported)
+		}
 		newIDs[sn.ID] = true
 		targets = append(targets, probeTarget{pn: pn, id: sn.ID})
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -18,6 +19,7 @@ import (
 	"gioui.org/widget/material"
 
 	"openproxy/core/kernel"
+	"openproxy/core/specnode"
 
 	"openproxy/app/i18n"
 	"openproxy/app/locales"
@@ -493,21 +495,34 @@ func (a *App) layoutHeroProgress(gtx layout.Context) layout.Dimensions {
 	case stageCheck:
 		text = a.T("hero.working_check", nil)
 	case stageConnect:
-		name := ""
-		if id := a.svc.SelectedNodeID(); id != "" {
-			if v, ok := a.svc.NodeByID(id); ok {
-				name = v.Record.Node.Name
-			}
+		// The chain reports the candidate it is attempting;
+		// without one (a plain manual connect) the generic
+		// trying-nodes line stands.
+		if name := a.tryingNameText(); name != "" {
+			text = a.T("hero.working_connect", map[string]string{"name": name})
+		} else {
+			text = a.T("hero.working_trying", nil)
 		}
-		text = a.T("hero.working_connect", map[string]string{"name": name})
 	}
 	return surface(gtx, pal.Primary, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return iconLayout(gtx, iconPulse, 26, pal.Primary)
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return iconLayout(gtx, iconPulse, 26, pal.Primary)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+					layout.Flexed(1, a.lblWrap(16, 22, font.Bold, pal.Text, text, 2).Layout),
+				)
 			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-			layout.Flexed(1, a.lblWrap(16, 22, font.Bold, pal.Text, text, 2).Layout),
+			// The chain must be stoppable from the state it
+			// creates (2026-11-14 fix batch): a cancel button
+			// right on the progress card, wired to the same
+			// stop-everything action as Disconnect.
+			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return a.bigButton(gtx, &a.heroCancelBtn, iconClose, a.T("common.cancel", nil), btnOutline)
+			}),
 		)
 	})
 }
@@ -748,27 +763,33 @@ func (a *App) selectedUnconnectable() (service.NodeView, bool) {
 }
 
 // layoutNodeRow renders one node in the v3 two-line form:
-// 40x28 flag (or protocol tile), name line (name + pool badge,
-// favorite star and overflow button aligned to it), and the
-// {server} · {protocol} · {latency} sub-line. Rows are 72dp,
-// 84dp with a warning line. Tapping the name selects; connect /
-// check latency / delete live in the overflow strip the "…"
-// button opens under the row.
+// 40x28 flag (or protocol tile), name line (name + pool
+// badge, favorite star aligned to it), and the {server} ·
+// {protocol} · {latency} sub-line. Rows are 72dp, 84dp with a
+// warning line.
+//
+// Interaction (user ruling, 2026-11-14): tapping the row
+// itself — anywhere on the flag/text body — selects the node
+// AND expands its action strip (connect / check latency /
+// delete) directly under the row; tapping again collapses
+// it, and expanding another row collapses this one. The
+// previous design hid the actions behind a "…" overflow
+// button, which the user could not find on the real device;
+// the "…" button is gone. The star stays its own tap target
+// at the end of the name line.
 func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Dimensions {
 	n := view.Record.Node
 	btns := a.rowButtons(n.ID)
 	if btns.selectBtn.Clicked(gtx) {
 		a.svc.SelectNode(n.ID)
+		if a.expandedRowID == n.ID {
+			a.expandedRowID = ""
+		} else {
+			a.expandedRowID = n.ID
+		}
 	}
 	if btns.favBtn.Clicked(gtx) {
 		a.svc.SetNodeFavorite(n.ID, !view.Favorite)
-	}
-	if btns.menuBtn.Clicked(gtx) {
-		if a.menuOpenID == n.ID {
-			a.menuOpenID = ""
-		} else {
-			a.menuOpenID = n.ID
-		}
 	}
 	if btns.connBtn.Clicked(gtx) {
 		id := n.ID
@@ -776,8 +797,13 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 	}
 	if btns.testBtn.Clicked(gtx) {
 		id := n.ID
-		a.runAsync("test-node", func(ctx context.Context) error {
-			_, err := a.svc.TestNode(ctx, id)
+		a.runAsync("check-node", func(ctx context.Context) error {
+			// "Check latency" is the FAST reachability check
+			// (2026-11-14 fix batch): a full handshake per
+			// tap is what made checking pool nodes unusable.
+			// The result (latency / no response) lands on the
+			// row's sub-line.
+			_, err := a.svc.CheckNodeFast(ctx, id)
 			return err
 		})
 	}
@@ -786,7 +812,7 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 	}
 	selected := n.ID == a.svc.SelectedNodeID()
 	warn := view.Weak || view.Insecure
-	menuOpen := a.menuOpenID == n.ID
+	expanded := a.expandedRowID == n.ID
 	connectingThis := a.isConnecting() && n.ID == a.svc.SelectedNodeID()
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -811,77 +837,78 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 						Top: unit.Dp(10), Bottom: unit.Dp(10),
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Top: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return a.flagIconLayout(gtx, view)
+							// The row body (flag + text) is
+							// one big tap target: tapping it
+							// selects the node and expands /
+							// collapses its action strip.
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return btns.selectBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return layout.Inset{Top: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												return a.flagIconLayout(gtx, view)
+											})
+										}),
+										layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+											rows := []layout.FlexChild{
+												// Name line: name +
+												// pool badge.
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+														layout.Flexed(1, a.lbl1(15, font.Bold, pal.Text, n.Name).Layout),
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															if !view.VPNGate {
+																return layout.Dimensions{}
+															}
+															return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+																return a.pill(gtx, a.T("source.vpngate.badge", nil), pal.PrimaryLite, pal.PrimaryText, 18)
+															})
+														}),
+													)
+												}),
+												layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+												layout.Rigid(a.lbl1(12.5, font.Normal, pal.Secondary, nodeSubLine(a, view)).Layout),
+											}
+											if warn {
+												text := ""
+												if view.Weak {
+													text = "⚠ " + a.T("node.weak_badge", nil) + " · " + a.T("node.weak_demote", nil)
+												} else {
+													text = "⚠ " + a.T("node.insecure_badge", nil)
+												}
+												rows = append(rows,
+													layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+													layout.Rigid(a.lbl1(12, font.Bold, pal.Warn, text).Layout),
+												)
+											}
+											if connectingThis {
+												rows = append(rows,
+													layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+													layout.Rigid(a.lbl1(12, font.Bold, pal.PrimaryText, a.T("node.connecting_badge", nil)).Layout),
+												)
+											}
+											return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+										}),
+									)
 								})
 							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								rows := []layout.FlexChild{
-									// Name line: name (tap =
-									// select), pool badge, then
-									// star and overflow aligned
-									// to this line.
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-												return btns.selectBtn.Layout(gtx, a.lbl1(15, font.Bold, pal.Text, n.Name).Layout)
-											}),
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												if !view.VPNGate {
-													return layout.Dimensions{}
-												}
-												return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-													return a.pill(gtx, a.T("source.vpngate.badge", nil), pal.PrimaryLite, pal.PrimaryText, 18)
-												})
-											}),
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												return btns.favBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-													return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(2), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx,
-														func(gtx layout.Context) layout.Dimensions {
-															return starIcon(gtx, view.Favorite, 21)
-														})
-												})
-											}),
-											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												return btns.menuBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-													return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx,
-														func(gtx layout.Context) layout.Dimensions {
-															return iconLayout(gtx, iconDots, 20, pal.Hint)
-														})
-												})
-											}),
-										)
-									}),
-									layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-									layout.Rigid(a.lbl1(12.5, font.Normal, pal.Secondary, nodeSubLine(a, view)).Layout),
-								}
-								if warn {
-									text := ""
-									if view.Weak {
-										text = "⚠ " + a.T("node.weak_badge", nil) + " · " + a.T("node.weak_demote", nil)
-									} else {
-										text = "⚠ " + a.T("node.insecure_badge", nil)
-									}
-									rows = append(rows,
-										layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-										layout.Rigid(a.lbl1(12, font.Bold, pal.Warn, text).Layout),
-									)
-								}
-								if connectingThis {
-									rows = append(rows,
-										layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-										layout.Rigid(a.lbl1(12, font.Bold, pal.PrimaryText, a.T("node.connecting_badge", nil)).Layout),
-									)
-								}
-								return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+							// The star is the row's only other
+							// tap target, sitting on the name
+							// line at the row's end.
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return btns.favBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(2), Bottom: unit.Dp(3)}.Layout(gtx,
+										func(gtx layout.Context) layout.Dimensions {
+											return starIcon(gtx, view.Favorite, 21)
+										})
+								})
 							}),
 						)
 					})
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if !menuOpen {
+					if !expanded {
 						return layout.Dimensions{}
 					}
 					return layout.Inset{Left: unit.Dp(68), Right: unit.Dp(dpMargin), Bottom: unit.Dp(10)}.Layout(gtx,
@@ -1583,11 +1610,24 @@ func (a *App) protoDisplayName(protocol string) string {
 
 // nodeSubLine builds a node row's second line from data and
 // localized fragments only: {server} · {protocol} · {latency
-// or check state}.
+// or check state}. Two measurement kinds can stand in the
+// last slot and the fresher one wins: the persisted handshake
+// record (LastTest) and this session's fast reachability
+// check (view.Reach — a latency when it responded, "no
+// response" when it did not). Neither is ever dressed up as
+// the other: the fast check's number is a connect latency
+// under the "check latency" action that produced it, and the
+// handshake number only ever comes from a real handshake.
 func nodeSubLine(a *App, view service.NodeView) string {
 	n := view.Record.Node
 	s := n.Server + " · " + a.protoDisplayName(n.Protocol)
 	lt := n.LastTest
+	if r := view.Reach; r != nil && r.Checked && reachIsFresher(r, lt) {
+		if r.Reachable {
+			return s + " · " + a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", r.LatencyMs)})
+		}
+		return s + " · " + a.T("node.no_response", nil)
+	}
 	switch {
 	case lt == nil:
 		s += " · " + a.T("node.untested", nil)
@@ -1597,6 +1637,20 @@ func nodeSubLine(a *App, view service.NodeView) string {
 		s += " · " + a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", *lt.LatencyMs)})
 	}
 	return s
+}
+
+// reachIsFresher reports whether a fast-check result postdates
+// the persisted handshake record (an unparseable or absent
+// record time counts as older).
+func reachIsFresher(r *service.ReachResult, lt *specnode.LastTest) bool {
+	if lt == nil {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339, lt.At)
+	if err != nil {
+		return true
+	}
+	return r.At.After(t)
 }
 
 // --- Logs tab --------------------------------------------------------

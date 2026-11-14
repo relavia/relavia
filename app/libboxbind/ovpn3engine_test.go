@@ -227,6 +227,40 @@ func TestOvpn3EngineValidateAndCredsGate(t *testing.T) {
 	}
 }
 
+// TestOvpn3EngineStartCanceled is the 2026-11-14 fix-batch
+// engine half of the chain-cancellation fix: a start waiting
+// on a silent core must unwind as CANCELED (not timeout) as
+// soon as the caller's context dies — this is what lets
+// Disconnect interrupt a manual connect and a chain attempt
+// without burning the full 45 s bound.
+func TestOvpn3EngineStartCanceled(t *testing.T) {
+	withConsent(t, true)
+	bridge := &fakeOvpn3Bridge{script: ""} // core never answers
+	withBridge(t, bridge)
+	e := newOvpn3Engine(nil)
+	e.connectTimeout = 30 * time.Second // must NOT be what ends the wait
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	err := e.StartNode(ctx, ovpn3Node(), kernel.PlatformOptions{})
+	if err == nil {
+		t.Fatal("StartNode succeeded against a silent core")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("StartNode took %v; caller cancellation did not unwind the wait", elapsed)
+	}
+	if k := kernel.KindOf(err); k != kernel.KindCanceled {
+		t.Errorf("KindOf = %q, want canceled (err %v)", k, err)
+	}
+	if bridge.stops != 1 {
+		t.Errorf("native stops = %d, want 1 (cancel must stop the core)", bridge.stops)
+	}
+}
+
 func TestOvpn3EngineStartTimeout(t *testing.T) {
 	withConsent(t, true)
 	bridge := &fakeOvpn3Bridge{script: ""} // core never answers

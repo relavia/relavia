@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Launcher icon background: the product palette's primary
+  (app/ui theme.go pal.Primary). The eye mark itself is the
+  white foreground drawable; this color is also what the
+  system splash screen (Android 12+) shows behind the icon.
+-->
+<resources>
+    <color name="ic_launcher_background">#2E54EB</color>
+</resources>

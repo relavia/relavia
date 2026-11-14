@@ -62,6 +62,17 @@ func maybeStartProductUI() {
 }
 
 func runProductUI() {
+	// NO-AUTO-RECONNECT INVARIANT (2026-11-14 fix batch,
+	// diagnosis §4③): application startup must never start a
+	// session, restore a previous connection, or schedule one.
+	// A connection begins only from an explicit user action in
+	// the shell (connect button, one-tap hero). The 2026-11-14
+	// device report "it turned itself back on" was traced to
+	// the one-tap chain surviving Disconnect, not to startup —
+	// the chain cancellation is fixed in the service layer —
+	// and this path stays connect-free so it cannot regress:
+	// nothing below this comment may call Connect /
+	// OneTapConnect / engine.StartNode.
 	session.mu.Lock()
 	err := session.ensureBuiltLocked()
 	svc, tr := session.svc, session.tr

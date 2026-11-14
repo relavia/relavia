@@ -83,7 +83,16 @@ func TestPassthroughRewrite(t *testing.T) {
 	if bc.proto != "tcp" {
 		t.Errorf("proto = %q, want tcp", bc.proto)
 	}
-	for _, want := range []string{"management", "daemon", "log", "status", "plugin", "up", "user"} {
+	// Retry discipline (2026-11-14 fix batch): the sample's
+	// server-sent "resolv-retry infinite" must be rewritten to
+	// the bounded form and the rewrite must be listed.
+	if !strings.Contains(bc.text, "\nresolv-retry "+boundedResolvRetry+"\n") {
+		t.Errorf("generated config missing bounded resolv-retry:\n%s", bc.text)
+	}
+	if strings.Contains(bc.text, "resolv-retry infinite") {
+		t.Errorf("unbounded resolv-retry survived:\n%s", bc.text)
+	}
+	for _, want := range []string{"management", "daemon", "log", "status", "plugin", "up", "user", "resolv-retry(infinite->" + boundedResolvRetry + ")"} {
 		found := false
 		for _, r := range bc.rewritten {
 			if r == want {
@@ -92,6 +101,26 @@ func TestPassthroughRewrite(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("rewritten list missing %q (got %v)", want, bc.rewritten)
+		}
+	}
+}
+
+// TestPassthroughFiniteResolvRetryPreserved pins the other
+// half of the retry discipline: a finite server-sent retry
+// count is the server's own bounded choice and passes through
+// byte-identical, with no rewrite recorded.
+func TestPassthroughFiniteResolvRetryPreserved(t *testing.T) {
+	body := "client\ndev tun\nproto udp\nremote 203.0.113.8 1194\nresolv-retry 5\nverb 3\n"
+	bc, err := buildConfig(passthroughNode(body), buildOptions{})
+	if err != nil {
+		t.Fatalf("buildConfig: %v", err)
+	}
+	if !strings.Contains(bc.text, "\nresolv-retry 5\n") {
+		t.Errorf("finite resolv-retry not preserved:\n%s", bc.text)
+	}
+	for _, r := range bc.rewritten {
+		if strings.HasPrefix(r, "resolv-retry") {
+			t.Errorf("unexpected resolv-retry rewrite recorded: %v", bc.rewritten)
 		}
 	}
 }
