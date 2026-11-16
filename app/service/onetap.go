@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"openproxy/core/kernel"
+	"openproxy/core/openvpn"
 	"openproxy/core/specnode"
 )
 
@@ -28,10 +29,20 @@ import (
 //  2. Fast TCP pre-check (fastcheck.go) over the best-ranked
 //     probable candidates only — concurrent, ≤3 s each.
 //  3. Real connects, best first, at most oneTapMaxAttempts
-//     of them, each bounded by oneTapAttemptBudget; the
-//     first CONNECTED stops the chain. A candidate that just
-//     failed its pre-check is not retried inside the same
-//     chain. Total worst case ≈ pre-check ~6 s + 5 × 15 s.
+//     candidates, each attempt bounded by
+//     oneTapAttemptBudget; the first CONNECTED stops the
+//     chain. A candidate that just failed its pre-check is
+//     not retried inside the same chain. ONE exception: an
+//     attempt refused with an auth rejection
+//     (attemptAuthRejected) earns exactly one same-node
+//     retry — the live-server evidence (diagnosis §11) is
+//     that some SoftEther builds capture the client
+//     certificate only intermittently, so a second draw
+//     against the same node can connect where the first
+//     was refused. The retry spends from the same start
+//     budget as first attempts (oneTapMaxStarts), so the
+//     total worst case stays ≈ pre-check ~6 s + 5 × 15 s
+//     plus at most a few 1 s retry gaps.
 //
 // The chain runs on the caller's context: canceling it (the
 // UI registers the chain via BeginOp, and Disconnect cancels
@@ -54,14 +65,32 @@ const (
 	// oneTapPrecheckPool is how many top-ranked probable
 	// candidates get the fast pre-check.
 	oneTapPrecheckPool = 12
-	// oneTapMaxAttempts caps real connection attempts.
+	// oneTapMaxAttempts caps the candidates a chain will
+	// try (distinct nodes).
 	oneTapMaxAttempts = 5
+	// oneTapMaxStarts caps the TOTAL real connection starts
+	// one chain may make: first attempts and same-node auth
+	// retries draw from this one budget, so a retry never
+	// adds starts on top of the candidate cap — it spends
+	// reach into later candidates instead. With at most
+	// one retry per candidate the chain still makes at
+	// most oneTapMaxStarts starts, each bounded by
+	// oneTapAttemptBudget.
+	oneTapMaxStarts = oneTapMaxAttempts
 	// oneTapAttemptBudget bounds one real connection
 	// attempt inside the chain (a MANUAL single-node
 	// connect keeps the engine's own 45 s bound instead —
 	// only the chain's per-try budget is this short).
 	oneTapAttemptBudget = 15 * time.Second
 )
+
+// oneTapAuthRetryDelay is the short pause before the
+// same-node auth retry: long enough for the server's
+// per-connection state to settle, short enough to stay
+// inside the chain's interactive feel. The wait dies with
+// the chain context. A variable (not a constant) so
+// internal tests can resize it.
+var oneTapAuthRetryDelay = time.Second
 
 // rankOneTapCandidates orders records for the chain by the
 // evidence tiers described above. Tier 0 orders exactly like
@@ -216,38 +245,66 @@ func (s *Service) OneTapConnect(ctx context.Context, group string, onStage func(
 
 	var lastErr error
 	allNoResponse := true
+	startsLeft := oneTapMaxStarts
 	for _, rec := range attempts {
+		if startsLeft <= 0 {
+			break
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		if onStage != nil {
 			onStage(OneTapStageConnect, rec.Node)
 		}
-		start := time.Now()
-		err, timedOut := s.connectAttempt(ctx, rec.Node.ID)
-		if err == nil {
-			if autoPick != nil && autoPick.ID == rec.Node.ID {
-				s.mu.Lock()
-				s.lastAuto = autoSelectOutcome{nodeName: rec.Node.Name, fellBack: autoFellBack, ok: true}
-				s.mu.Unlock()
+		// One candidate may cost two starts: its first
+		// attempt, plus — only after an auth rejection —
+		// the single same-node retry. Both draws spend
+		// from startsLeft, so the retry never extends the
+		// chain past oneTapMaxStarts total starts.
+		for draw := 0; ; draw++ {
+			start := time.Now()
+			err, timedOut := s.connectAttempt(ctx, rec.Node.ID)
+			startsLeft--
+			if err == nil {
+				if autoPick != nil && autoPick.ID == rec.Node.ID {
+					s.mu.Lock()
+					s.lastAuto = autoSelectOutcome{nodeName: rec.Node.Name, fellBack: autoFellBack, ok: true}
+					s.mu.Unlock()
+				}
+				// A connect IS a real handshake: record its
+				// measured latency exactly like a probe's
+				// (this is what lets the node rank by evidence
+				// next time, and enter "picked for you").
+				s.recordHandshakeSuccess(rec, time.Now(), time.Since(start))
+				_ = s.store.Save()
+				s.logf("one-tap: connected to %s (%s)", rec.Node.Name, rec.Node.ID)
+				return rec.Node, nil
 			}
-			// A connect IS a real handshake: record its
-			// measured latency exactly like a probe's
-			// (this is what lets the node rank by evidence
-			// next time, and enter "picked for you").
-			s.recordHandshakeSuccess(rec, time.Now(), time.Since(start))
-			_ = s.store.Save()
-			s.logf("one-tap: connected to %s (%s)", rec.Node.Name, rec.Node.ID)
-			return rec.Node, nil
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, cerr
+			}
+			s.logf("one-tap: %s (%s) failed: %v", rec.Node.Name, rec.Node.ID, err)
+			if !timedOut && !attemptNoResponse(err) {
+				allNoResponse = false
+			}
+			lastErr = err
+			// The retry is narrow on purpose: first draw
+			// only, a clean auth rejection only (an attempt
+			// the watchdog had to stop at its budget is the
+			// timeout class, not a fresh draw), and only
+			// while the start budget lasts.
+			if draw > 0 || timedOut || startsLeft <= 0 || !attemptAuthRejected(err) {
+				break
+			}
+			s.logf("one-tap: %s (%s) auth rejected; retrying the same node once", rec.Node.Name, rec.Node.ID)
+			timer := time.NewTimer(oneTapAuthRetryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
-		if cerr := ctx.Err(); cerr != nil {
-			return nil, cerr
-		}
-		s.logf("one-tap: %s (%s) failed: %v", rec.Node.Name, rec.Node.ID, err)
-		if !timedOut && !attemptNoResponse(err) {
-			allNoResponse = false
-		}
-		lastErr = err
 	}
 	if allNoResponse {
 		return nil, ErrNoNodeResponded
@@ -268,6 +325,27 @@ func attemptNoResponse(err error) bool {
 		return true
 	}
 	return false
+}
+
+// attemptAuthRejected classifies an attempt failure as the
+// server-side credential rejection: the core reported
+// AUTH_FAILED, which both production OpenVPN paths map to
+// the stable code openvpn.CodeAuthFailed (the desktop
+// process adapter from the child's AUTH_FAILED line, the
+// Android OpenVPN 3 engine from the native event). This is
+// the chain's ONLY retryable class, and deliberately
+// narrower than kernel.KindHandshakeFailed: a TLS failure
+// or a certificate-verify refusal is deterministic and a
+// second draw would fail identically, while the
+// AUTH_FAILED draws against SoftEther pool hosts are the
+// documented intermittent-capture lottery (diagnosis §11:
+// identical config, first attempt AUTH_FAILED, second
+// CONNECTED). Keying on the code rather than the kind also
+// keeps an unclassified handshake failure — one that never
+// carried the core's AUTH_FAILED verdict — out of the
+// retry.
+func attemptAuthRejected(err error) bool {
+	return openvpn.CodeOf(err) == openvpn.CodeAuthFailed
 }
 
 // connectAttempt runs one Connect under the chain's attempt

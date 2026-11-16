@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"openproxy/core/kernel"
+	"openproxy/core/openvpn"
 	"openproxy/core/specnode"
 )
 
@@ -370,6 +371,267 @@ func TestOneTapNoNodes(t *testing.T) {
 	svc := newBatchService(t, &scriptEngine{})
 	if _, err := svc.OneTapConnect(context.Background(), AllGroups, nil); !errors.Is(err, ErrNoNodeSelected) {
 		t.Fatalf("empty chain error = %v, want ErrNoNodeSelected", err)
+	}
+}
+
+// --- 3. same-node auth retry (diagnosis §11, user-approved) --------------
+
+// seqEngine consumes a per-node queue of scripted outcomes:
+// each StartNode pops the node's next entry — a non-nil
+// entry fails the start with it, a nil entry (or an
+// exhausted queue) connects. scriptEngine's fixed per-node
+// error cannot express fail-then-succeed on one node, which
+// is the whole shape of the auth lottery.
+type seqEngine struct {
+	mu      sync.Mutex
+	starts  []string
+	scripts map[string][]error
+	running *specnode.Node
+}
+
+func (e *seqEngine) Capabilities() kernel.Capabilities {
+	return kernel.Capabilities{KernelID: "seq", Platform: kernel.PlatformCapabilities{Platform: "test"}}
+}
+func (e *seqEngine) ValidateSpec(_ context.Context, n *specnode.Node) error { return n.Validate() }
+func (e *seqEngine) StartNode(_ context.Context, n *specnode.Node, _ kernel.PlatformOptions) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.starts = append(e.starts, n.ID)
+	if q := e.scripts[n.ID]; len(q) > 0 {
+		err := q[0]
+		e.scripts[n.ID] = q[1:]
+		if err != nil {
+			return err
+		}
+	}
+	e.running = n
+	return nil
+}
+func (e *seqEngine) Stop(context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.running = nil
+	return nil
+}
+func (e *seqEngine) Status() kernel.Status {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.running != nil {
+		return kernel.Status{State: kernel.StateRunning, ActiveNodeID: e.running.ID}
+	}
+	return kernel.Status{State: kernel.StateIdle}
+}
+func (e *seqEngine) TestHandshakeNode(_ context.Context, n *specnode.Node) (*kernel.HandshakeResult, error) {
+	return &kernel.HandshakeResult{NodeID: n.ID, TestedAt: time.Now(),
+		Error: kernel.NewError(kernel.KindHandshakeFailed, "TestHandshake", "seq engine does not probe", nil)}, nil
+}
+func (e *seqEngine) QueryTraffic(context.Context) (*kernel.TrafficStats, error) {
+	return &kernel.TrafficStats{}, nil
+}
+func (e *seqEngine) MixedAddr() string { return "" }
+func (e *seqEngine) startCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.starts)
+}
+func (e *seqEngine) startedIDs() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string{}, e.starts...)
+}
+
+// authRejectedErr builds the AUTH_FAILED failure exactly as
+// the production paths surface it: the stable
+// openvpn.CodeAuthFailed code wrapped around the
+// handshake_failed kernel error (desktop process adapter
+// and Android OpenVPN 3 engine alike).
+func authRejectedErr() error {
+	return openvpn.WrapClassified(openvpn.CodeAuthFailed,
+		kernel.NewError(kernel.KindHandshakeFailed, "Start", "the server rejected the credentials", nil))
+}
+
+// shrinkAuthRetryDelay keeps the retry tests fast; the
+// cancel test sets its own long delay instead.
+func shrinkAuthRetryDelay(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := oneTapAuthRetryDelay
+	oneTapAuthRetryDelay = d
+	t.Cleanup(func() { oneTapAuthRetryDelay = old })
+}
+
+// TestOneTapAuthRetrySecondDrawConnects is the §11 shape:
+// the first draw on a node is refused with AUTH_FAILED, the
+// identical second draw connects. The chain must spend
+// exactly 2 starts on that node and never touch the next
+// candidate.
+func TestOneTapAuthRetrySecondDrawConnects(t *testing.T) {
+	shrinkAuthRetryDelay(t, 5*time.Millisecond)
+	eng := &seqEngine{scripts: map[string][]error{
+		"lottery": {authRejectedErr(), nil},
+		"next":    {nil},
+	}}
+	svc := newBatchService(t, eng)
+	addRanked(t, svc, "lottery", "10.5.0.1", 10, 100)
+	addRanked(t, svc, "next", "10.5.0.2", 20, 100)
+	svc.tcpDial = delayDialer(map[string]time.Duration{
+		"10.5.0.1": 5 * time.Millisecond,
+		"10.5.0.2": 15 * time.Millisecond,
+	})
+	node, err := svc.OneTapConnect(context.Background(), AllGroups, nil)
+	if err != nil {
+		t.Fatalf("OneTapConnect: %v", err)
+	}
+	if node == nil || node.ID != "lottery" {
+		t.Fatalf("connected node = %v, want lottery (the retried node)", node)
+	}
+	if got := eng.startedIDs(); len(got) != 2 || got[0] != "lottery" || got[1] != "lottery" {
+		t.Fatalf("starts = %v, want exactly [lottery lottery] (next candidate untouched)", got)
+	}
+}
+
+// TestOneTapAuthRetryTwiceRejectedMovesOn: two auth
+// rejections exhaust the node's one retry; the chain moves
+// to the next candidate instead of drawing a third time.
+func TestOneTapAuthRetryTwiceRejectedMovesOn(t *testing.T) {
+	shrinkAuthRetryDelay(t, 5*time.Millisecond)
+	eng := &seqEngine{scripts: map[string][]error{
+		"lottery": {authRejectedErr(), authRejectedErr(), nil},
+		"next":    {nil},
+	}}
+	svc := newBatchService(t, eng)
+	addRanked(t, svc, "lottery", "10.5.1.1", 10, 100)
+	addRanked(t, svc, "next", "10.5.1.2", 20, 100)
+	svc.tcpDial = delayDialer(map[string]time.Duration{
+		"10.5.1.1": 5 * time.Millisecond,
+		"10.5.1.2": 15 * time.Millisecond,
+	})
+	node, err := svc.OneTapConnect(context.Background(), AllGroups, nil)
+	if err != nil {
+		t.Fatalf("OneTapConnect: %v", err)
+	}
+	if node == nil || node.ID != "next" {
+		t.Fatalf("connected node = %v, want next", node)
+	}
+	if got := eng.startedIDs(); len(got) != 3 || got[0] != "lottery" || got[1] != "lottery" || got[2] != "next" {
+		t.Fatalf("starts = %v, want [lottery lottery next] (no third draw)", got)
+	}
+}
+
+// TestOneTapNonAuthFailuresNotRetried: the retry belongs to
+// the auth class alone. A timeout (no protocol answer) and
+// a TLS failure (same kernel kind as AUTH_FAILED but a
+// different, deterministic classification code) each cost
+// their node exactly one start.
+func TestOneTapNonAuthFailuresNotRetried(t *testing.T) {
+	shrinkAuthRetryDelay(t, 5*time.Millisecond)
+	cases := map[string]error{
+		"timeout": kernel.NewError(kernel.KindTimeout, "Start", "silence", nil),
+		"tls": openvpn.WrapClassified(openvpn.CodeTLSFailed,
+			kernel.NewError(kernel.KindHandshakeFailed, "Start", "the TLS handshake failed", nil)),
+	}
+	for name, failErr := range cases {
+		eng := &seqEngine{scripts: map[string][]error{
+			"flaky": {failErr, nil}, // a retry would connect — it must never run
+			"next":  {nil},
+		}}
+		svc := newBatchService(t, eng)
+		addRanked(t, svc, "flaky", "10.5.2.1", 10, 100)
+		addRanked(t, svc, "next", "10.5.2.2", 20, 100)
+		svc.tcpDial = delayDialer(map[string]time.Duration{
+			"10.5.2.1": 5 * time.Millisecond,
+			"10.5.2.2": 15 * time.Millisecond,
+		})
+		node, err := svc.OneTapConnect(context.Background(), AllGroups, nil)
+		if err != nil {
+			t.Fatalf("%s: OneTapConnect: %v", name, err)
+		}
+		if node == nil || node.ID != "next" {
+			t.Fatalf("%s: connected node = %v, want next", name, node)
+		}
+		if got := eng.startedIDs(); len(got) != 2 || got[0] != "flaky" || got[1] != "next" {
+			t.Fatalf("%s: starts = %v, want [flaky next] (flaky started exactly once)", name, got)
+		}
+	}
+}
+
+// TestOneTapAuthRetrySpendsStartBudget pins the accounting:
+// retries draw from the same oneTapMaxStarts budget as
+// first attempts, so a chain facing nothing but auth
+// lotteries still makes exactly oneTapMaxStarts starts in
+// total — the retry buys depth on early candidates with
+// reach into later ones, never extra starts.
+func TestOneTapAuthRetrySpendsStartBudget(t *testing.T) {
+	shrinkAuthRetryDelay(t, time.Millisecond)
+	scripts := map[string][]error{}
+	eng := &seqEngine{scripts: scripts}
+	svc := newBatchService(t, eng)
+	delays := map[string]time.Duration{}
+	for i := 1; i <= 5; i++ {
+		id := fmt.Sprintf("n%d", i)
+		host := fmt.Sprintf("10.5.3.%d", i)
+		addRanked(t, svc, id, host, int64(i*10), 100)
+		scripts[id] = []error{authRejectedErr(), authRejectedErr(), authRejectedErr()}
+		delays[host] = time.Duration(i*5) * time.Millisecond
+	}
+	svc.tcpDial = delayDialer(delays)
+	_, err := svc.OneTapConnect(context.Background(), AllGroups, nil)
+	if openvpn.CodeOf(err) != openvpn.CodeAuthFailed {
+		t.Fatalf("chain error = %v, want the last auth rejection (not no-response)", err)
+	}
+	want := []string{"n1", "n1", "n2", "n2", "n3"}
+	if got := eng.startedIDs(); len(got) != len(want) {
+		t.Fatalf("starts = %v, want %v (total capped at oneTapMaxStarts=%d)", got, want, oneTapMaxStarts)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("starts = %v, want %v", got, want)
+			}
+		}
+	}
+}
+
+// TestOneTapAuthRetryGapCancelPrompt: canceling (via
+// Disconnect, as the UI does) while the chain sits in the
+// retry gap ends the chain promptly with context.Canceled
+// and the retry never starts.
+func TestOneTapAuthRetryGapCancelPrompt(t *testing.T) {
+	shrinkAuthRetryDelay(t, 30*time.Second) // the gap must dwarf the assert window
+	eng := &seqEngine{scripts: map[string][]error{
+		"lottery": {authRejectedErr(), nil}, // the retry would connect — it must never run
+	}}
+	svc := newBatchService(t, eng)
+	addRanked(t, svc, "lottery", "10.5.4.1", 10, 100)
+	svc.tcpDial = instantDialer
+	ctx, release := svc.BeginOp()
+	defer release()
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.OneTapConnect(ctx, AllGroups, nil)
+		done <- err
+	}()
+	// Wait for the first (rejected) start, then disconnect
+	// while the chain is in — or just entering — the gap.
+	deadline := time.Now().Add(5 * time.Second)
+	for eng.startCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("chain never started the first attempt")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := svc.Disconnect(context.Background()); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("chain error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("chain did not end promptly when canceled during the retry gap")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := eng.startCount(); got != 1 {
+		t.Fatalf("starts after cancel = %d, want exactly 1 (the retry must not start)", got)
 	}
 }
 
