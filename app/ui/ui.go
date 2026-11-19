@@ -123,6 +123,7 @@ type App struct {
 	// The risk gate itself is the bottom sheet: sheet is nil
 	// while closed and is touched only on the layout goroutine.
 	vgRiskBtn, vgEnableBtn, vgRefreshBtn, vgRevokeBtn widget.Clickable
+	vgBarRefreshBtn                                   widget.Clickable // v4 import status-bar refresh (same action as vgRefreshBtn)
 	sheet                                             *riskSheetState
 	sheetAgreeBtn, sheetCloseBtn                      widget.Clickable
 	sheetFullBtn, sheetScrimBtn                       widget.Clickable
@@ -310,16 +311,22 @@ func (a *App) Layout(gtx layout.Context) layout.Dimensions {
 	a.handleClicks(gtx)
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			// v4: the page background is the tier's two-stop
+			// vertical gradient.
 			size := gtx.Constraints.Min
-			paint.FillShape(gtx.Ops, pal.Bg, clip.Rect{Max: size}.Op())
+			defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+			fillVGradient(gtx, size, pal.BgTop, pal.Bg)
 			return layout.Dimensions{Size: size}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// v4: navigation moves to a solid bottom tab bar
+			// (thumb reach); the error strip stays directly
+			// under the header.
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(a.layoutHeader),
-				layout.Rigid(a.layoutTabs),
 				layout.Rigid(a.layoutErrorStrip),
 				layout.Flexed(1, a.layoutBody),
+				layout.Rigid(a.layoutTabBar),
 			)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -396,7 +403,11 @@ func (a *App) handleClicks(gtx layout.Context) {
 		a.startOneTap()
 	}
 	if a.heroReasonBtn.Clicked(gtx) {
+		// v4 failed state: "view reason" lands on the log page
+		// scrolled to the newest entries (the failure record).
 		a.tab = tabLogs
+		a.logList.Position.First = 0
+		a.logList.Position.Offset = 0
 	}
 	if a.checkAllBtn.Clicked(gtx) {
 		group := a.currentGroup()
@@ -416,6 +427,18 @@ func (a *App) handleClicks(gtx layout.Context) {
 	}
 	if a.recBtn.Clicked(gtx) {
 		a.openRiskSheet(sheetGateEnable)
+	}
+	// The pool enable button is rendered by the import
+	// page's recommendation card but must be polled HERE,
+	// before any layout: Gio's Clickable.Layout drains (and
+	// discards) pending click events, so a poll that runs
+	// after the button was laid out in the same frame never
+	// sees the click — the button was dead when its poll
+	// lived in layoutVPNGateSource, which the import page
+	// lays out after the recommendation card (frame-verified
+	// 2026-11-20; the log stayed empty after repeated taps).
+	if a.vgEnableBtn.Clicked(gtx) {
+		a.runAsync("vpngate-enable", func(ctx context.Context) error { return a.svc.EnableVPNGate() })
 	}
 	if a.riskLinkBtn.Clicked(gtx) {
 		if a.svc.VPNGateStatus().ConsentState == service.VPNGateConsentAcknowledged {
@@ -1076,96 +1099,103 @@ func (a *App) layoutHeader(gtx layout.Context) layout.Dimensions {
 			layout.Rigid(a.lbl(17, font.Bold, pal.Text, a.T("app.title", nil)).Layout),
 			layout.Flexed(1, layout.Spacer{}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				// Status is a single dot here; the sentence
-				// lives on the hero card (v3 first screen).
-				d := gtx.Dp(unit.Dp(10))
-				size := image.Pt(d, d)
+				// v4: the header status is a dot + TEXT pill —
+				// the state is readable from the header alone
+				// (audit A2: the v3 textless dot said nothing).
 				switch a.statusKind() {
 				case statusRunning:
-					paint.FillShape(gtx.Ops, pal.Success, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
+					return a.dotPill(gtx, a.T("status.connected", nil), pal.SuccessBg, pal.Success, pal.Success)
 				case statusBusy:
-					paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
+					return a.dotPill(gtx, a.T("status.connecting", nil), pal.PrimaryLite, pal.PrimaryText, pal.Primary)
 				case statusFailed:
-					paint.FillShape(gtx.Ops, pal.Danger, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
+					return a.dotPill(gtx, a.T("status.failed", nil), pal.DangerBg, pal.Danger, pal.Danger)
 				default:
-					paint.FillShape(gtx.Ops, pal.Hint, clip.Stroke{
-						Path:  clip.Ellipse(image.Rect(0, 0, d, d)).Path(gtx.Ops),
-						Width: float32(gtx.Dp(unit.Dp(1.6))),
-					}.Op())
+					return a.dotPill(gtx, a.T("status.disconnected", nil), pal.PillIdle, pal.Secondary, pal.Hint)
 				}
-				return layout.Dimensions{Size: size}
 			}),
 		)
 	})
 }
 
-func (a *App) layoutTabs(gtx layout.Context) layout.Dimensions {
+// layoutTabBar is the v4 bottom navigation: a SOLID bar
+// (card surface + top hairline — page content must never show
+// through it) with four icon + text cells; the selected cell
+// carries a solid primary capsule behind its icon and label.
+// Each cell is at least 64dp tall (touch table).
+func (a *App) layoutTabBar(gtx layout.Context) layout.Dimensions {
 	keys := []string{"nav.nodes", "nav.import", "nav.logs", "nav.settings"}
 	icons := []iconKind{iconGlobe, iconDownload, iconList, iconGear}
-	return layout.Inset{Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin)}.Layout(gtx,
-		func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(44))
-			return layout.Stack{}.Layout(gtx,
-				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-					size := gtx.Constraints.Min
-					fillRRect(gtx, size, 12, pal.PillIdle)
-					return layout.Dimensions{Size: size}
-				}),
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{
-						Left: unit.Dp(4), Right: unit.Dp(4),
-						Top: unit.Dp(4), Bottom: unit.Dp(4),
-					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						children := make([]layout.FlexChild, 0, len(keys))
-						for i, key := range keys {
-							i, key := i, key
-							children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								selected := a.tab == i
-								return material.Clickable(gtx, &a.tabBtns[i], func(gtx layout.Context) layout.Dimensions {
-									return layout.Stack{}.Layout(gtx,
-										layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-											size := gtx.Constraints.Min
-											if selected {
-												fillRRect(gtx, size, 9, pal.Card)
-												strokeRRect(gtx, size, 9, pal.Border)
-											}
-											return layout.Dimensions{Size: size}
-										}),
-										layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-											// Carry the tab height (44
-											// container minus its 4dp
-											// insets) on the Stacked
-											// child: Gio Stacks size
-											// from Stacked children
-											// alone, so the selected
-											// capsule fill otherwise
-											// paints at content height.
-											gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(36))
-											fg := pal.Secondary
-											w := font.Normal
-											if selected {
-												fg = pal.Text
-												w = font.Bold
-											}
-											return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-												return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														return iconLayout(gtx, icons[i], 18, fg)
-													}),
-													layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-													layout.Rigid(a.lbl(14, w, fg, a.T(key, nil)).Layout),
-												)
-											})
-										}),
-									)
-								})
-							}))
-						}
-						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
-					})
-				}),
-			)
-		})
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Constraints.Min
+			paint.FillShape(gtx.Ops, pal.Card, clip.Rect{Max: size}.Op())
+			paint.FillShape(gtx.Ops, pal.Border, clip.Rect(image.Rect(0, 0, size.X, gtx.Dp(unit.Dp(1)))).Op())
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{
+				Left: unit.Dp(8), Right: unit.Dp(8),
+				Top: unit.Dp(8), Bottom: unit.Dp(8),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(keys))
+				for i, key := range keys {
+					i, key := i, key
+					children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						selected := a.tab == i
+						// Raw widget.Clickable, not material.Clickable:
+						// the material variant paints a square hover
+						// shade over the whole cell on pointer devices,
+						// which reads as a gray block behind the
+						// capsule. The capsule itself is the affordance.
+						return a.tabBtns[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+								layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+									size := gtx.Constraints.Min
+									if selected {
+										// The capsule spans the
+										// cell (3dp side insets),
+										// not just the label.
+										mx := gtx.Dp(unit.Dp(3))
+										rect := image.Rect(mx, 0, size.X-mx, size.Y)
+										r := gtx.Dp(unit.Dp(24))
+										rr := clip.RRect{Rect: rect, NE: r, NW: r, SE: r, SW: r}
+										paint.FillShape(gtx.Ops, pal.Primary, rr.Op(gtx.Ops))
+									}
+									return layout.Dimensions{Size: size}
+								}),
+								layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+									// Carry the cell size on the
+									// Stacked child (Gio Stacks size
+									// from Stacked children alone):
+									// full cell width, and 64dp bar
+									// minus the bar's 8dp vertical
+									// insets in height.
+									gtx.Constraints.Min.X = gtx.Constraints.Max.X
+									gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(dpTabBarH - 16))
+									fg := pal.Secondary
+									w := font.Normal
+									if selected {
+										fg = pal.White
+										w = font.Bold
+									}
+									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												return iconLayout(gtx, icons[i], 20, fg)
+											}),
+											layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+											layout.Rigid(a.lbl(14, w, fg, a.T(key, nil)).Layout),
+										)
+									})
+								}),
+							)
+						})
+					}))
+				}
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
+			})
+		}),
+	)
 }
 
 func (a *App) layoutBody(gtx layout.Context) layout.Dimensions {
@@ -1194,7 +1224,7 @@ func (a *App) layoutErrorStrip(gtx layout.Context) layout.Dimensions {
 	return layout.Inset{
 		Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(8),
 	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return material.Clickable(gtx, &a.errStripBtn, func(gtx layout.Context) layout.Dimensions {
+		return a.errStripBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Stack{}.Layout(gtx,
 				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 					size := gtx.Constraints.Min

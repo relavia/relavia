@@ -14,6 +14,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -77,6 +78,11 @@ func (a *App) layoutNodes(gtx layout.Context) layout.Dimensions {
 	}
 	add(a.layoutRiskBanners)
 	searching := strings.TrimSpace(a.searchEd.Text()) != ""
+	// v4 zero-node rule (audit A6): with no nodes at all, the
+	// search box and group chips are NOT rendered — a new user
+	// gets the watermark empty state and the guide entry
+	// instead of controls over an empty list.
+	noNodes := len(a.svc.Nodes(service.AllGroups)) == 0
 	if searching {
 		n := len(a.filteredViews())
 		add(func(gtx layout.Context) layout.Dimensions {
@@ -94,31 +100,43 @@ func (a *App) layoutNodes(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(a.lbl(15, font.Bold, pal.Text, a.T("hero.all_title", nil)).Layout),
 					layout.Flexed(1, layout.Spacer{}.Layout),
+					// v4: icon + text, a real 48dp button (the
+					// v3 icon-only 40dp target was Step 18 debt).
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return material.Clickable(gtx, &a.checkAllBtn, func(gtx layout.Context) layout.Dimensions {
-							gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(40)), gtx.Dp(unit.Dp(40)))
-							return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return iconLayout(gtx, iconGauge, 21, pal.PrimaryText)
-							})
-						})
+						return a.iconTextButton(gtx, &a.checkAllBtn, iconGauge, a.T("conn.check_all", nil), pal.PrimaryText)
 					}),
 				)
 			})
 		})
 	}
-	add(a.layoutSearchRow)
-	add(a.layoutGroupTabs)
+	if !noNodes {
+		add(a.layoutSearchRow)
+		add(a.layoutGroupTabs)
+	}
 	rows := a.visibleRowViews()
 	if len(rows) == 0 {
 		if a.svc.Status().State != kernel.StateRunning {
-			key := "node.empty"
-			if searching {
-				key = "search.empty"
+			if noNodes && !searching {
+				add(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(28)}.Layout(gtx,
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(watermarkEye),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+								layout.Rigid(a.lblWrap(13.5, 19.5, font.Normal, pal.Secondary, a.T("node.empty", nil), 3).Layout),
+							)
+						})
+				})
+			} else {
+				key := "node.empty"
+				if searching {
+					key = "search.empty"
+				}
+				add(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(16)}.Layout(gtx,
+						a.lbl(14, font.Normal, pal.Secondary, a.T(key, nil)).Layout)
+				})
 			}
-			add(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(16)}.Layout(gtx,
-					a.lbl(14, font.Normal, pal.Secondary, a.T(key, nil)).Layout)
-			})
 		}
 	} else {
 		for i := range rows {
@@ -131,7 +149,7 @@ func (a *App) layoutNodes(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions { return dims }),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.dividerInset(gtx, 68)
+						return a.dividerInset(gtx, 66)
 					}),
 				)
 			})
@@ -141,7 +159,15 @@ func (a *App) layoutNodes(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{
 			Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
 			Top: unit.Dp(10), Bottom: unit.Dp(12),
-		}.Layout(gtx, a.layoutGuideRow)
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			if noNodes {
+				// Zero-node rule: the tutorial entry is a
+				// card here — the empty state's one clear
+				// next step.
+				return surface(gtx, color.NRGBA{}, a.layoutGuideRow)
+			}
+			return a.layoutGuideRow(gtx)
+		})
 	})
 	return material.List(a.th, &a.nodeList).Layout(gtx, len(items), func(gtx layout.Context, i int) layout.Dimensions {
 		return items[i](gtx)
@@ -149,24 +175,12 @@ func (a *App) layoutNodes(gtx layout.Context) layout.Dimensions {
 }
 
 // visibleRowViews is the node list's row set: the current
-// group/search filter with the connected node removed (it
-// pins inside the hero instead).
+// group/search filter. v4 keeps the connected node in the
+// list (marked as the current node, per the approved mockup's
+// row state) instead of removing it — the v3 removal read as
+// "the node vanished" (audit A4).
 func (a *App) visibleRowViews() []service.NodeView {
-	views := a.filteredViews()
-	if a.svc.Status().State != kernel.StateRunning {
-		return views
-	}
-	connID := a.connectedNodeID()
-	if connID == "" {
-		return views
-	}
-	rest := views[:0]
-	for _, v := range views {
-		if v.Record.Node.ID != connID {
-			rest = append(rest, v)
-		}
-	}
-	return rest
+	return a.filteredViews()
 }
 
 // connectedNodeID identifies the node the running session is
@@ -278,8 +292,10 @@ func (a *App) layoutSearchRow(gtx layout.Context) layout.Dimensions {
 								if !hasText {
 									return layout.Dimensions{}
 								}
-								return material.Clickable(gtx, &a.searchClearBtn, func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(32)), gtx.Dp(unit.Dp(32)))
+								// Visual box 40dp, hit area 48x48
+								// (v4 touch table).
+								return a.searchClearBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(48)), gtx.Dp(unit.Dp(48)))
 									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 										return iconLayout(gtx, iconClose, 16, pal.Hint)
 									})
@@ -307,7 +323,9 @@ func (a *App) layoutGroupTabs(gtx layout.Context) layout.Dimensions {
 		tabs = append(tabs, tab{"g:" + g, g})
 	}
 	return layout.Inset{Top: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		h := gtx.Dp(unit.Dp(dpChipH + 4))
+		// Chip visual height is 40dp; the row is 48dp so every
+		// chip's hit area clears 48 (v4 touch table).
+		h := gtx.Dp(unit.Dp(dpChipH + 8))
 		gtx.Constraints.Min.Y = h
 		gtx.Constraints.Max.Y = h
 		return material.List(a.th, &a.groupList).Layout(gtx, len(tabs), func(gtx layout.Context, i int) layout.Dimensions {
@@ -321,7 +339,7 @@ func (a *App) layoutGroupTabs(gtx layout.Context) layout.Dimensions {
 			if i == 0 {
 				left = unit.Dp(dpMargin)
 			}
-			return layout.Inset{Left: left, Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx,
+			return layout.Inset{Left: left, Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx,
 				func(gtx layout.Context) layout.Dimensions {
 					return a.chip(gtx, btn, t.label, a.groupEnum.Value == t.value)
 				})
@@ -396,6 +414,44 @@ func (a *App) heroKind() (heroKind, *service.NodeView) {
 	return heroNew, nil
 }
 
+// heroPanel is the v4 first-screen panel: the deep-blue
+// brand gradient (radius 24, the screen's only dark block)
+// with the pupil status badge centered at the top and the
+// state's content under it. Every hero state shares this one
+// panel and badge position, so state changes never move the
+// layout (audit A1/A2).
+func (a *App) heroPanel(gtx layout.Context, st pupilState, content layout.Widget) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Constraints.Min
+			shadowRRect(gtx, size, dpHeroRad, pal.HeroShadow, 6)
+			fillHeroGradient(gtx, size, dpHeroRad)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return layout.Inset{
+				Left: unit.Dp(20), Right: unit.Dp(20),
+				Top: unit.Dp(22), Bottom: unit.Dp(20),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.heroBadge(gtx, st)
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+					layout.Rigid(content),
+				)
+			})
+		}),
+	)
+}
+
+// heroSubWhite is the panel's secondary line color: white at
+// 85% (the mockups' panel sub-line; white on every hero
+// gradient stop clears AA — palette_test.go verifies the
+// stops against full white, the stricter pair).
+func heroSubWhite() color.NRGBA { return color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xD9} }
+
 func (a *App) layoutHero(gtx layout.Context) layout.Dimensions {
 	kind, view := a.heroKind()
 	switch kind {
@@ -406,40 +462,50 @@ func (a *App) layoutHero(gtx layout.Context) layout.Dimensions {
 	case heroFailed:
 		return a.layoutHeroFailed(gtx)
 	case heroReconnect:
-		return surface(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(a.lbl(20, font.Bold, pal.Text, a.T("hero.idle_title", nil)).Layout),
+		return a.heroPanel(gtx, pupilIdle, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(a.lbl(20, font.Bold, pal.White, a.T("hero.idle_title", nil)).Layout),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-				layout.Rigid(a.lbl1(13, font.Normal, pal.Secondary, nodeSubLine(a, *view)).Layout),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+				layout.Rigid(a.lbl1(13, font.Normal, heroSubWhite(), nodeSubLine(a, *view)).Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return a.heroButton(gtx, &a.heroBtn, iconPower, a.T("hero.connect_last", nil), btnPrimary)
+					return fullWidth(gtx, func(gtx layout.Context) layout.Dimensions {
+						return a.panelButton(gtx, &a.heroBtn, iconPower, a.T("hero.connect_last", nil), panelBtnSolid)
+					})
 				}),
 			)
 		})
 	case heroFastest:
-		return surface(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(a.lbl(20, font.Bold, pal.Text, a.T("hero.idle_title", nil)).Layout),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		return a.heroPanel(gtx, pupilIdle, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(a.lbl(20, font.Bold, pal.White, a.T("hero.idle_title", nil)).Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return a.heroButton(gtx, &a.heroBtn, iconPower, a.T("hero.connect_fastest", nil), btnPrimary)
+					return fullWidth(gtx, func(gtx layout.Context) layout.Dimensions {
+						return a.panelButton(gtx, &a.heroBtn, iconPower, a.T("hero.connect_fastest", nil), panelBtnSolid)
+					})
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
 				layout.Rigid(a.layoutRiskLine),
 			)
 		})
 	default: // heroNew
-		return surface(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(a.lbl(20, font.Bold, pal.Text, a.T("hero.new_title", nil)).Layout),
+		return a.heroPanel(gtx, pupilIdle, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(a.lbl(20, font.Bold, pal.White, a.T("hero.new_title", nil)).Layout),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				layout.Rigid(a.lblWrap(13.5, 19.5, font.Normal, pal.Secondary, a.T("hero.new_desc", nil), 3).Layout),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return a.heroButton(gtx, &a.heroBtn, iconPower, a.T("hero.connect_free", nil), btnPrimary)
+					l := a.lblWrap(13.5, 19.5, font.Normal, heroSubWhite(), a.T("hero.new_desc", nil), 3)
+					l.Alignment = text.Middle
+					return l.Layout(gtx)
 				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fullWidth(gtx, func(gtx layout.Context) layout.Dimensions {
+						return a.panelButton(gtx, &a.heroBtn, iconPower, a.T("hero.connect_free", nil), panelBtnSolid)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
 				layout.Rigid(a.layoutRiskLine),
 			)
 		})
@@ -447,81 +513,72 @@ func (a *App) layoutHero(gtx layout.Context) layout.Dimensions {
 }
 
 func (a *App) layoutHeroConnected(gtx layout.Context, view *service.NodeView) layout.Dimensions {
-	return surface(gtx, pal.Success, func(gtx layout.Context) layout.Dimensions {
+	return a.heroPanel(gtx, pupilConnected, func(gtx layout.Context) layout.Dimensions {
 		rows := []layout.FlexChild{
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						d := gtx.Dp(unit.Dp(10))
-						paint.FillShape(gtx.Ops, pal.Success, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
-						return layout.Dimensions{Size: image.Pt(d, d)}
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(7)}.Layout),
-					layout.Rigid(a.lbl(15, font.Bold, pal.Success, a.T("status.connected", nil)).Layout),
-				)
-			}),
+			layout.Rigid(a.lbl(20, font.Bold, pal.White, a.T("status.connected", nil)).Layout),
 		}
 		if view != nil {
 			line := nodeSubLine(a, *view)
 			if a.autoPicked() {
-				line = a.T("hero.auto_picked", map[string]string{"name": view.Record.Node.Name})
+				line = a.T("hero.auto_short", nil) + " · " + view.Record.Node.Name
 				if lt := view.Record.Node.LastTest; lt != nil && lt.OK && lt.LatencyMs != nil {
 					line += " · " + a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", *lt.LatencyMs)})
 				}
 			}
 			rows = append(rows,
-				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-				layout.Rigid(a.lbl1(20, font.Bold, pal.Text, view.Record.Node.Name).Layout),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-				layout.Rigid(a.lbl1(13, font.Normal, pal.Secondary, line).Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(a.lbl1(13, font.Normal, heroSubWhite(), line).Layout),
 			)
 		}
 		rows = append(rows,
-			layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			// v4: disconnect sits in the same slot at the same
+			// size as the connect button — white fill, danger
+			// text (never a shrinking outline secondary).
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.bigButton(gtx, &a.disconnectBtn, iconPower, a.T("conn.disconnect", nil), btnDangerOutline)
+				return fullWidth(gtx, func(gtx layout.Context) layout.Dimensions {
+					return a.panelButton(gtx, &a.disconnectBtn, iconPower, a.T("conn.disconnect", nil), panelBtnDanger)
+				})
 			}),
 		)
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx, rows...)
 	})
 }
 
 func (a *App) layoutHeroProgress(gtx layout.Context) layout.Dimensions {
 	stage, _, _ := a.heroProgress()
-	text := a.T("status.connecting", nil)
+	stageText := a.T("status.connecting", nil)
 	switch stage {
 	case stageRefresh:
-		text = a.T("hero.working_refresh", nil)
+		stageText = a.T("hero.working_refresh", nil)
 	case stageCheck:
-		text = a.T("hero.working_check", nil)
+		stageText = a.T("hero.working_check", nil)
 	case stageConnect:
 		// The chain reports the candidate it is attempting;
 		// without one (a plain manual connect) the generic
 		// trying-nodes line stands.
 		if name := a.tryingNameText(); name != "" {
-			text = a.T("hero.working_connect", map[string]string{"name": name})
+			stageText = a.T("hero.working_connect", map[string]string{"name": name})
 		} else {
-			text = a.T("hero.working_trying", nil)
+			stageText = a.T("hero.working_trying", nil)
 		}
 	}
-	return surface(gtx, pal.Primary, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	return a.heroPanel(gtx, pupilConnecting, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return iconLayout(gtx, iconPulse, 26, pal.Primary)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-					layout.Flexed(1, a.lblWrap(16, 22, font.Bold, pal.Text, text, 2).Layout),
-				)
+				l := a.lblWrap(17, 23, font.Bold, pal.White, stageText, 2)
+				l.Alignment = text.Middle
+				return l.Layout(gtx)
 			}),
 			// The chain must be stoppable from the state it
 			// creates (2026-11-14 fix batch): a cancel button
-			// right on the progress card, wired to the same
+			// right on the panel, wired to the same
 			// stop-everything action as Disconnect.
-			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.bigButton(gtx, &a.heroCancelBtn, iconClose, a.T("common.cancel", nil), btnOutline)
+				return fullWidth(gtx, func(gtx layout.Context) layout.Dimensions {
+					return a.panelButton(gtx, &a.heroCancelBtn, iconNone, a.T("common.cancel", nil), panelBtnOutline)
+				})
 			}),
 		)
 	})
@@ -533,60 +590,103 @@ func (a *App) layoutHeroFailed(gtx layout.Context) layout.Dimensions {
 	if herr != nil {
 		reason = a.T(ErrorKey(herr), nil)
 	}
-	return surface(gtx, pal.Danger, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return iconLayout(gtx, iconWarn, 20, pal.Danger)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-					layout.Rigid(a.lbl(17, font.Bold, pal.Danger, a.T("hero.failed_title", nil)).Layout),
-				)
-			}),
+	return a.heroPanel(gtx, pupilFailed, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(a.lbl(20, font.Bold, pal.White, a.T("hero.failed_title", nil)).Layout),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-			layout.Rigid(a.lblMax(13, font.Normal, pal.Text, reason, 2).Layout),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return a.bigButton(gtx, &a.heroRetryBtn, iconRefresh, a.T("hero.retry_another", nil), btnPrimary)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return a.bigButton(gtx, &a.heroReasonBtn, iconList, a.T("hero.view_reason", nil), btnOutline)
-					}),
-				)
+				l := a.lblMax(13, font.Normal, heroSubWhite(), reason, 2)
+				l.Alignment = text.Middle
+				return l.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fullWidth(gtx, func(gtx layout.Context) layout.Dimensions {
+					return a.panelButton(gtx, &a.heroRetryBtn, iconRefresh, a.T("hero.retry_another", nil), panelBtnSolid)
+				})
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+			// "View reason" is the quiet secondary action: it
+			// jumps to the log page, which now opens at the
+			// newest entries (the failure record).
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return a.textButton(gtx, &a.heroReasonBtn, a.T("hero.view_reason", nil), pal.White)
 			}),
 		)
 	})
 }
 
-// layoutRiskLine is the hero's one-line pool risk summary with
-// its full-notice entry: file icon, the short line, and the
-// "view the risk notice" link opening the sheet.
+// layoutRiskLine is the hero panel's pool risk summary with
+// its full-notice entry. v4 form (audit A3): the short line
+// gets the panel's full width and up to two lines — it is
+// compliance text and must NEVER be truncated (the v3 frame
+// cut it in half) — with the "view the risk notice" link as
+// an underlined text button under it, opening the sheet.
 func (a *App) layoutRiskLine(gtx layout.Context) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+	sub := heroSubWhite()
+	return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return iconLayout(gtx, iconFileText, 13, pal.Hint)
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return iconLayout(gtx, iconShield, 14, sub)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					l := a.lblWrap(12.5, 18, font.Normal, sub, a.T("hero.risk_line", nil), 2)
+					l.Alignment = text.Middle
+					return l.Layout(gtx)
+				}),
+			)
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
-		layout.Flexed(1, a.lbl1(11.5, font.Normal, pal.Hint, a.T("hero.risk_line", nil)).Layout),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.textButton(gtx, &a.riskLinkBtn, a.T("risk.view_link", nil), pal.PrimaryText)
+			return a.underlinedButton(gtx, &a.riskLinkBtn, a.T("risk.view_link", nil), pal.White)
 		}),
 	)
 }
 
+// underlinedButton is a text button whose label carries an
+// underline (the hero panel's risk link, per the v4 mockups).
+func (a *App) underlinedButton(gtx layout.Context, btn *widget.Clickable, label string, fg color.NRGBA) layout.Dimensions {
+	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(48))
+		return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Stack{}.Layout(gtx,
+						layout.Stacked(a.lbl(13, font.Bold, fg, label).Layout),
+						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+							size := gtx.Constraints.Min
+							u := color.NRGBA{R: fg.R, G: fg.G, B: fg.B, A: 0x99}
+							paint.FillShape(gtx.Ops, u, clip.Rect(image.Rect(0, size.Y-gtx.Dp(unit.Dp(2)), size.X, size.Y)).Op())
+							return layout.Dimensions{Size: size}
+						}),
+					)
+				})
+			})
+	})
+}
+
 // --- "Picked for you" ----------------------------------------------------
+
+// pickedEntry is one shortlist row: the view plus the i18n
+// key of the tag that says WHY it is here (v4: the reason
+// moves into the sub-line as a small tag — 上次连接 / 收藏 /
+// 刚刚测到最快 — instead of hiding in the section title).
+type pickedEntry struct {
+	view   service.NodeView
+	tagKey string
+}
 
 // pickedViews builds the shortlist strictly from real measured
 // data (teardown: only nodes with a successful latency-bearing
 // handshake on record may appear; nothing is estimated or
 // invented). Order: the last successfully connected node, then
-// favorites by latency, then the fastest — at most three.
-func (a *App) pickedViews() []service.NodeView {
+// favorites by latency, then the fastest — at most three. The
+// tag records the pass that picked the entry, so it always
+// tells the truth about why the row is here.
+func (a *App) pickedViews() []pickedEntry {
 	views := a.svc.Nodes(a.currentGroup())
 	var tested []service.NodeView
 	for _, v := range views {
@@ -601,31 +701,37 @@ func (a *App) pickedViews() []service.NodeView {
 	sort.SliceStable(byLatency, func(i, j int) bool {
 		return *byLatency[i].Record.Node.LastTest.LatencyMs < *byLatency[j].Record.Node.LastTest.LatencyMs
 	})
-	var out []service.NodeView
+	var out []pickedEntry
 	seen := map[string]bool{}
 	if connID := a.connectedNodeID(); connID != "" {
-		seen[connID] = true // the connected node pins in the hero
+		seen[connID] = true // the connected node is the hero's, not a pick
 	}
-	add := func(v service.NodeView) {
+	add := func(v service.NodeView, tagKey string) {
 		if !seen[v.Record.Node.ID] && len(out) < 3 {
 			seen[v.Record.Node.ID] = true
-			out = append(out, v)
+			out = append(out, pickedEntry{view: v, tagKey: tagKey})
 		}
 	}
 	if id := a.svc.LastConnectedNodeID(); id != "" {
 		for _, v := range tested {
 			if v.Record.Node.ID == id {
-				add(v)
+				add(v, "picked.tag_last")
 			}
 		}
 	}
 	for _, v := range byLatency {
 		if v.Favorite {
-			add(v)
+			add(v, "picked.tag_fav")
 		}
 	}
+	// Only the single fastest measured node may wear the
+	// "fastest just measured" tag; any further fill rows carry
+	// no tag rather than a claim that is not true of them.
+	if len(byLatency) > 0 {
+		add(byLatency[0], "picked.tag_fastest")
+	}
 	for _, v := range byLatency {
-		add(v)
+		add(v, "")
 	}
 	return out
 }
@@ -652,11 +758,12 @@ func (a *App) layoutPickedSection() layout.Widget {
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return surface(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
 					rows := []layout.FlexChild{}
-					for i, v := range picked {
-						i, v := i, v
+					for i, e := range picked {
+						i, e := i, e
+						v := e.view
 						if i > 0 {
 							rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return a.dividerInset(gtx, 46)
+								return a.dividerInset(gtx, 52)
 							}))
 						}
 						rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -666,25 +773,45 @@ func (a *App) layoutPickedSection() layout.Widget {
 									return a.svc.Connect(ctx, id)
 								})
 							}
-							return material.Clickable(gtx, &a.pickedBtns[i], func(gtx layout.Context) layout.Dimensions {
+							return a.pickedBtns[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(64))
 								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										return a.flagIconSized(gtx, v, 36, 25)
+										return a.flagIconLayout(gtx, v)
 									}),
-									layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-										sub := a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", *v.Record.Node.LastTest.LatencyMs)}) +
-											" · " + a.protoDisplayName(v.Record.Node.Protocol)
 										return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 											layout.Rigid(a.lbl1(15, font.Bold, pal.Text, v.Record.Node.Name).Layout),
-											layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-											layout.Rigid(a.lbl1(12, font.Normal, pal.Secondary, sub).Layout),
+											layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+											// v4 sub-line: the reason
+											// tag leads, then protocol
+											// and the measured latency.
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												lat := a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", *v.Record.Node.LastTest.LatencyMs)})
+												rest := a.protoDisplayName(v.Record.Node.Protocol) + " · " + lat
+												if e.tagKey == "" {
+													return a.lbl1(12, font.Normal, pal.Secondary, rest).Layout(gtx)
+												}
+												return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														return a.pill(gtx, a.T(e.tagKey, nil), pal.PrimaryLite, pal.PrimaryText, 20)
+													}),
+													layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+													layout.Flexed(1, a.lbl1(12, font.Normal, pal.Secondary, rest).Layout),
+												)
+											}),
 										)
 									}),
 									layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+									// Circular connect affordance:
+									// 40dp visual inside a 48dp hit
+									// area (v4 touch table).
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										return iconLayout(gtx, iconArrowCircle, 30, pal.Primary)
+										gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(48)), gtx.Dp(unit.Dp(48)))
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return iconLayout(gtx, iconArrowCircle, 40, pal.Primary)
+										})
 									}),
 								)
 							})
@@ -762,24 +889,83 @@ func (a *App) selectedUnconnectable() (service.NodeView, bool) {
 	return view, true
 }
 
-// layoutNodeRow renders one node in the v3 two-line form:
-// 40x28 flag (or protocol tile), name line (name + pool
-// badge, favorite star aligned to it), and the {server} ·
-// {protocol} · {latency} sub-line. Rows are 72dp, 84dp with a
-// warning line.
+// latencyBand maps a measured latency to its pill band:
+// <= 80ms green, anything measured above that amber (a slow
+// answer is still an answer; red is reserved for no response
+// / failed checks).
+func latencyBand(ms float64) latencyState {
+	if ms <= 80 {
+		return latencyOK
+	}
+	return latencySlow
+}
+
+// latencyOf resolves a row's latency pill from the same two
+// measurement kinds nodeSubLine reads — the persisted
+// handshake record and this session's fast reachability
+// check, the fresher one winning. Neither is ever dressed up
+// as the other.
+func (a *App) latencyOf(view service.NodeView) (latencyState, string) {
+	n := view.Record.Node
+	lt := n.LastTest
+	if r := view.Reach; r != nil && r.Checked && reachIsFresher(r, lt) {
+		if r.Reachable {
+			return latencyBand(r.LatencyMs), a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", r.LatencyMs)})
+		}
+		return latencyBad, a.T("node.no_response", nil)
+	}
+	switch {
+	case lt == nil:
+		return latencyUntested, a.T("node.untested", nil)
+	case !lt.OK:
+		return latencyBad, a.T("node.test_failed", nil)
+	case lt.LatencyMs != nil:
+		return latencyBand(*lt.LatencyMs), a.T("node.latency", map[string]string{"ms": fmt.Sprintf("%.0f", *lt.LatencyMs)})
+	}
+	return latencyUntested, a.T("node.untested", nil)
+}
+
+// nodeSubParts builds the v4 row sub-line WITHOUT the latency
+// (which moved to the right-side pill column): {protocol} ·
+// {source or server}. Pool rows say "volunteer node" in plain
+// words — the v3 name-line capsule is gone (audit A5: it
+// truncated every pool node's name) — and the server address
+// only appears when the name does not already carry it.
+func (a *App) nodeSubParts(view service.NodeView) string {
+	n := view.Record.Node
+	s := a.protoDisplayName(n.Protocol)
+	if view.VPNGate {
+		return s + " · " + a.T("node.source_volunteer", nil)
+	}
+	if n.Server != "" && !strings.Contains(n.Name, n.Server) {
+		s += " · " + n.Server
+	}
+	return s
+}
+
+// layoutNodeRow renders one node in the v4 two-line form:
+// 40x28 flag (or protocol tile), name line (name + the
+// current-node pill when connected), sub-line (protocol ·
+// source/server), and the latency as a colored pill at the
+// right edge of the sub-line. The favorite star sits at the
+// name line's end in a 48x48 hit area. A selected or
+// connected row is highlighted by an INSET rounded rect with
+// its accent bar inside the rounding (audit A4: the v3 fill
+// bled to the screen edges).
 //
 // Interaction (user ruling, 2026-11-14): tapping the row
 // itself — anywhere on the flag/text body — selects the node
 // AND expands its action strip (connect / check latency /
-// delete) directly under the row; tapping again collapses
-// it, and expanding another row collapses this one. The
-// previous design hid the actions behind a "…" overflow
-// button, which the user could not find on the real device;
-// the "…" button is gone. The star stays its own tap target
-// at the end of the name line.
+// delete, three equal 48dp buttons) directly under the row;
+// tapping again collapses it, and expanding another row
+// collapses this one. The previous design hid the actions
+// behind a "…" overflow button, which the user could not
+// find on the real device; the "…" button is gone. The star
+// stays its own tap target at the end of the name line.
 func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Dimensions {
 	n := view.Record.Node
 	btns := a.rowButtons(n.ID)
+	connected := a.svc.Status().State == kernel.StateRunning && n.ID == a.connectedNodeID()
 	if btns.selectBtn.Clicked(gtx) {
 		a.svc.SelectNode(n.ID)
 		if a.expandedRowID == n.ID {
@@ -792,8 +978,14 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 		a.svc.SetNodeFavorite(n.ID, !view.Favorite)
 	}
 	if btns.connBtn.Clicked(gtx) {
-		id := n.ID
-		a.runAsync("connect", func(ctx context.Context) error { return a.svc.Connect(ctx, id) })
+		if connected {
+			// The connected row's primary action disconnects
+			// (same stop-everything path as the hero button).
+			a.stopAll()
+		} else {
+			id := n.ID
+			a.runAsync("connect", func(ctx context.Context) error { return a.svc.Connect(ctx, id) })
+		}
 	}
 	if btns.testBtn.Clicked(gtx) {
 		// "Check latency" is the FAST reachability check
@@ -803,37 +995,39 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 		// (2026-11-14 timing audit §8): while a sweep or a
 		// connect chain held the gate, these taps were
 		// dropped silently and the row looked dead. The
-		// result (latency / no response) lands on the row's
-		// sub-line either way.
+		// result lands on the row's latency pill either way.
 		a.runRowCheck(n.ID)
 	}
 	if btns.delBtn.Clicked(gtx) {
 		a.svc.DeleteNode(n.ID)
 	}
 	selected := n.ID == a.svc.SelectedNodeID()
+	highlight := selected || connected
 	warn := view.Weak || view.Insecure
 	expanded := a.expandedRowID == n.ID
 	connectingThis := a.isConnecting() && n.ID == a.svc.SelectedNodeID()
+	latState, latText := a.latencyOf(view)
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Min
-			if selected {
-				paint.FillShape(gtx.Ops, pal.PrimaryLite, clip.Rect{Max: size}.Op())
-				bar := gtx.Dp(unit.Dp(3))
-				paint.FillShape(gtx.Ops, pal.Primary, clip.Rect{Max: image.Pt(bar, size.Y)}.Op())
+			if highlight {
+				mx := gtx.Dp(unit.Dp(8))
+				my := gtx.Dp(unit.Dp(4))
+				rect := image.Rect(mx, my, size.X-mx, size.Y-my)
+				r := gtx.Dp(unit.Dp(14))
+				rr := clip.RRect{Rect: rect, NE: r, NW: r, SE: r, SW: r}
+				paint.FillShape(gtx.Ops, pal.PrimaryLite, rr.Op(gtx.Ops))
+				bar := image.Rect(mx, my+gtx.Dp(unit.Dp(12)), mx+gtx.Dp(unit.Dp(3)), size.Y-my-gtx.Dp(unit.Dp(12)))
+				paint.FillShape(gtx.Ops, pal.Primary, clip.Rect(bar).Op())
 			}
 			return layout.Dimensions{Size: size}
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			minH := unit.Dp(dpRowH)
-			if warn {
-				minH = unit.Dp(84)
-			}
-			gtx.Constraints.Min.Y = gtx.Dp(minH)
+			gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(dpRowH))
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{
-						Left: unit.Dp(dpMargin), Right: unit.Dp(8),
+						Left: unit.Dp(14), Right: unit.Dp(8),
 						Top: unit.Dp(10), Bottom: unit.Dp(10),
 					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
@@ -852,23 +1046,36 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 										layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 											rows := []layout.FlexChild{
-												// Name line: name +
-												// pool badge.
+												// Name line: the name,
+												// then the current-node
+												// pill when connected.
 												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 													return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 														layout.Flexed(1, a.lbl1(15, font.Bold, pal.Text, n.Name).Layout),
 														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-															if !view.VPNGate {
+															if !connected {
 																return layout.Dimensions{}
 															}
 															return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-																return a.pill(gtx, a.T("source.vpngate.badge", nil), pal.PrimaryLite, pal.PrimaryText, 18)
+																return a.pill(gtx, a.T("node.selected", nil), pal.SuccessBg, pal.Success, 20)
 															})
 														}),
 													)
 												}),
 												layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-												layout.Rigid(a.lbl1(12.5, font.Normal, pal.Secondary, nodeSubLine(a, view)).Layout),
+												// Sub-line: protocol ·
+												// source at the left,
+												// the latency pill at
+												// the right edge.
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+														layout.Flexed(1, a.lbl1(12.5, font.Normal, pal.Secondary, a.nodeSubParts(view)).Layout),
+														layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+														layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+															return a.latencyPill(gtx, latState, latText)
+														}),
+													)
+												}),
 											}
 											if warn {
 												text := ""
@@ -894,14 +1101,15 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 								})
 							}),
 							// The star is the row's only other
-							// tap target, sitting on the name
-							// line at the row's end.
+							// tap target, at the name line's
+							// end: 22dp visual in a 48x48 hit
+							// area (v4 touch table).
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return btns.favBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(2), Bottom: unit.Dp(3)}.Layout(gtx,
-										func(gtx layout.Context) layout.Dimensions {
-											return starIcon(gtx, view.Favorite, 21)
-										})
+									gtx.Constraints.Min = image.Pt(gtx.Dp(unit.Dp(48)), gtx.Dp(unit.Dp(48)))
+									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										return starIcon(gtx, view.Favorite, 22)
+									})
 								})
 							}),
 						)
@@ -911,19 +1119,26 @@ func (a *App) layoutNodeRow(gtx layout.Context, view service.NodeView) layout.Di
 					if !expanded {
 						return layout.Dimensions{}
 					}
-					return layout.Inset{Left: unit.Dp(68), Right: unit.Dp(dpMargin), Bottom: unit.Dp(10)}.Layout(gtx,
+					// v4 action strip: three EQUAL 48dp
+					// buttons (connect solid / check latency
+					// outline / delete danger outline).
+					return layout.Inset{Left: unit.Dp(48), Right: unit.Dp(16), Top: unit.Dp(2), Bottom: unit.Dp(12)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
+							connLabel, connKind := a.T("conn.connect", nil), btnPrimary
+							if connected {
+								connLabel, connKind = a.T("conn.disconnect", nil), btnDangerOutline
+							}
 							return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return a.iconTextButton(gtx, &btns.connBtn, iconPower, a.T("conn.connect", nil), pal.PrimaryText)
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return a.bigButtonCompact(gtx, &btns.connBtn, iconPower, connLabel, connKind)
 								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return a.iconTextButton(gtx, &btns.testBtn, iconGauge, a.T("node.test", nil), pal.PrimaryText)
+								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return a.bigButtonCompact(gtx, &btns.testBtn, iconGauge, a.T("node.test", nil), btnOutline)
 								}),
-								layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return a.iconTextButton(gtx, &btns.delBtn, iconTrash, a.T("common.delete", nil), pal.Danger)
+								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return a.bigButtonCompact(gtx, &btns.delBtn, iconTrash, a.T("common.delete", nil), btnDangerOutline)
 								}),
 							)
 						})
@@ -968,19 +1183,31 @@ func (a *App) layoutImport(gtx layout.Context) layout.Dimensions {
 			Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
 			Top: unit.Dp(12), Bottom: unit.Dp(12),
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			children := []layout.FlexChild{
-				layout.Rigid(a.sectionTitle(a.T("import.title", nil))),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-			}
+			// v4: no page-internal title duplicating the tab
+			// name (audit A11). The pool block leads: the
+			// recommendation card while the pool is off, a
+			// one-line status bar once it is on (audit A8 —
+			// the button copy now always matches the state).
+			children := []layout.FlexChild{}
 			if rec := a.layoutPoolRecommend(); rec != nil {
 				children = append(children,
 					layout.Rigid(rec),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+				)
+			} else if bar := a.layoutPoolStatusBar(); bar != nil {
+				children = append(children,
+					layout.Rigid(bar),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 				)
 			}
 			children = append(children,
-				layout.Rigid(a.layoutGuideRow),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+				// The tutorial entry is its own card now.
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return surface(gtx, color.NRGBA{}, a.layoutGuideRow)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+				layout.Rigid(a.cardTitle(a.T("import.methods_title", nil))),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(a.layoutMethodRows),
 			)
 			if result := a.lastImportResult(); result != "" {
@@ -1057,6 +1284,77 @@ func (a *App) layoutPoolRecommend() layout.Widget {
 	}
 }
 
+// layoutPoolStatusBar is the v4 state-aware form of the
+// recommendation card: once the pool is enabled, the big card
+// collapses to a one-line status bar (check + "public nodes
+// on" + node count + last refresh + a refresh button), so the
+// page never shows an enable button for a pool that is
+// already on (audit A8). It returns nil while the pool is off
+// (the recommendation card's case) or not attached.
+func (a *App) layoutPoolStatusBar() layout.Widget {
+	st := a.svc.VPNGateStatus()
+	if !st.Attached || !st.Enabled {
+		return nil
+	}
+	return func(gtx layout.Context) layout.Dimensions {
+		if a.vgBarRefreshBtn.Clicked(gtx) {
+			a.runAsync("vpngate-refresh", func(ctx context.Context) error {
+				_, err := a.svc.RefreshVPNGate(ctx, true)
+				return err
+			})
+		}
+		return surface(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					size := image.Pt(gtx.Dp(unit.Dp(28)), gtx.Dp(unit.Dp(28)))
+					return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+							paint.FillShape(gtx.Ops, pal.SuccessBg, clip.Ellipse(image.Rect(0, 0, size.X, size.Y)).Op(gtx.Ops))
+							return layout.Dimensions{Size: size}
+						}),
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							return iconLayout(gtx, iconCheck, 16, pal.Success)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					rows := []layout.FlexChild{
+						layout.Rigid(a.lbl1(14.5, font.Bold, pal.Text, a.T("import.pool_on_title", nil)).Layout),
+					}
+					sub := ""
+					if st.NodeCount > 0 {
+						sub = a.T("import.pool_count", map[string]string{"count": fmt.Sprint(st.NodeCount)})
+						if !st.LastRefresh.IsZero() {
+							t := st.LastRefresh.Local()
+							ts := fmt.Sprintf("%04d-%02d-%02d %02d:%02d",
+								t.Year(), int(t.Month()), t.Day(), t.Hour(), t.Minute())
+							sub += " · " + a.T("import.pool_refreshed", map[string]string{"time": ts})
+						}
+					} else {
+						sub = a.T("source.vpngate.status_never", nil)
+					}
+					rows = append(rows,
+						layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+						layout.Rigid(a.lbl1(12, font.Normal, pal.Secondary, sub).Layout),
+					)
+					if st.Stale {
+						rows = append(rows,
+							layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+							layout.Rigid(a.lbl1(12, font.Normal, pal.Warn, a.T("source.vpngate.stale", nil)).Layout),
+						)
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.iconTextButton(gtx, &a.vgBarRefreshBtn, iconRefresh, a.T("source.vpngate.refresh", nil), pal.PrimaryText)
+				}),
+			)
+		})
+	}
+}
+
 // importMethod describes one import method row.
 type importMethod struct {
 	icon     iconKind
@@ -1079,69 +1377,77 @@ func (a *App) layoutMethodRows(gtx layout.Context) layout.Dimensions {
 		i, m := i, m
 		if i > 0 {
 			rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.dividerInset(gtx, 64)
+				return a.dividerInset(gtx, 66)
 			}))
 		}
 		open := a.expandedMethod == i+1
 		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if a.methodBtns[i].Clicked(gtx) {
-						if open {
-							a.expandedMethod = 0
-						} else {
-							a.expandedMethod = i + 1
+			return layout.Inset{Left: unit.Dp(14), Right: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if a.methodBtns[i].Clicked(gtx) {
+							if open {
+								a.expandedMethod = 0
+							} else {
+								a.expandedMethod = i + 1
+							}
 						}
-					}
-					return material.Clickable(gtx, &a.methodBtns[i], func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(88))
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								size := image.Pt(gtx.Dp(unit.Dp(40)), gtx.Dp(unit.Dp(40)))
-								return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-									layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-										fillRRect(gtx, size, 10, pal.PrimaryLite)
-										return layout.Dimensions{Size: size}
-									}),
-									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-										return iconLayout(gtx, m.icon, 21, pal.PrimaryText)
-									}),
-								)
-							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-									layout.Rigid(a.lbl(15.5, font.Bold, pal.Text, a.T(m.titleKey, nil)).Layout),
-									layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-									layout.Rigid(a.lblWrap(12.5, 17, font.Normal, pal.Secondary, a.T(m.descKey, nil), 2).Layout),
-								)
-							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return iconLayout(gtx, iconChevron, 20, pal.Hint)
-							}),
-						)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if !open {
-						return layout.Dimensions{}
-					}
-					return layout.Inset{Bottom: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						switch i {
-						case 0:
-							return a.layoutMethodLinks(gtx)
-						case 1:
-							return a.layoutMethodURL(gtx)
-						default:
-							return a.layoutMethodFile(gtx)
+						return a.methodBtns[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(88))
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									size := image.Pt(gtx.Dp(unit.Dp(40)), gtx.Dp(unit.Dp(40)))
+									return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+										layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+											fillRRect(gtx, size, 10, pal.PrimaryLite)
+											return layout.Dimensions{Size: size}
+										}),
+										layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+											return iconLayout(gtx, m.icon, 21, pal.PrimaryText)
+										}),
+									)
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+										layout.Rigid(a.lbl(15.5, font.Bold, pal.Text, a.T(m.titleKey, nil)).Layout),
+										layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+										layout.Rigid(a.lblWrap(12.5, 17, font.Normal, pal.Secondary, a.T(m.descKey, nil), 2).Layout),
+									)
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return iconLayout(gtx, iconChevron, 20, pal.Hint)
+								}),
+							)
+						})
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if !open {
+							return layout.Dimensions{}
 						}
-					})
-				}),
-			)
+						// The expanded body aligns to the
+						// row's text column (52dp inside the
+						// row's own inset).
+						return layout.Inset{Left: unit.Dp(52), Bottom: unit.Dp(14)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							switch i {
+							case 0:
+								return a.layoutMethodLinks(gtx)
+							case 1:
+								return a.layoutMethodURL(gtx)
+							default:
+								return a.layoutMethodFile(gtx)
+							}
+						})
+					}),
+				)
+			})
 		}))
 	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+	// v4: the three methods live in ONE card with dividers.
+	return cardShell(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+	})
 }
 
 // dividerInset draws a hairline starting leftDp from the
@@ -1167,7 +1473,7 @@ func (a *App) layoutMethodLinks(gtx layout.Context) layout.Dimensions {
 			if a.isBusy() {
 				kind = btnDisabled
 			}
-			return a.bigButton(gtx, &a.importBtn, iconFileText, a.T("import.from_text", nil), kind)
+			return a.bigButton(gtx, &a.importBtn, iconFileText, a.T("import.save_nodes", nil), kind)
 		}),
 	}
 	if note := a.lastImportNote(); note != "" {
@@ -1281,9 +1587,11 @@ func (a *App) layoutVPNGateSource(gtx layout.Context) layout.Dimensions {
 			a.openRiskSheet(sheetGateEnable)
 		}
 	}
-	if a.vgEnableBtn.Clicked(gtx) {
-		a.runAsync("vpngate-enable", func(ctx context.Context) error { return a.svc.EnableVPNGate() })
-	}
+	// vgEnableBtn is polled in ui.go's central click
+	// handling, not here: its button is rendered by the
+	// recommendation card earlier in this page's layout,
+	// and Gio's Clickable.Layout drains pending clicks, so
+	// a poll after that render would never fire.
 	if a.vgRefreshBtn.Clicked(gtx) {
 		a.runAsync("vpngate-refresh", func(ctx context.Context) error {
 			_, err := a.svc.RefreshVPNGate(ctx, true)
@@ -1343,6 +1651,17 @@ func (a *App) layoutVPNGateSource(gtx layout.Context) layout.Dimensions {
 				children = append(children,
 					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 					layout.Rigid(a.lbl(13, font.Normal, pal.Text, a.T("source.vpngate.status_never", nil)).Layout))
+			} else if st.LastRefresh.IsZero() {
+				// Nodes present but no refresh on record
+				// (seeded/migrated store): never print the
+				// zero time — say so plainly instead
+				// (frame-verified 2026-11-20: the unguarded
+				// format rendered "0001-01-01 00:00").
+				children = append(children,
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(a.lbl(13, font.Normal, pal.Text, a.T("source.vpngate.status_no_time", map[string]string{
+						"count": fmt.Sprint(st.NodeCount),
+					})).Layout))
 			} else {
 				t := st.LastRefresh.Local()
 				ts := fmt.Sprintf("%04d-%02d-%02d %02d:%02d",
@@ -1422,7 +1741,7 @@ func (a *App) layoutRiskSheet(gtx layout.Context) layout.Dimensions {
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Min
-			return material.Clickable(gtx, &a.sheetScrimBtn, func(gtx layout.Context) layout.Dimensions {
+			return a.sheetScrimBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				paint.FillShape(gtx.Ops, pal.Scrim, clip.Rect{Max: size}.Op())
 				return layout.Dimensions{Size: size}
 			})
@@ -1563,7 +1882,7 @@ func (a *App) layoutRiskSheetContent(gtx layout.Context, sh *riskSheetState) lay
 func (a *App) layoutGuideRow(gtx layout.Context) layout.Dimensions {
 	children := []layout.FlexChild{
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return material.Clickable(gtx, &a.guideBtn, func(gtx layout.Context) layout.Dimensions {
+			return a.guideBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1655,6 +1974,54 @@ func reachIsFresher(r *service.ReachResult, lt *specnode.LastTest) bool {
 
 // --- Logs tab --------------------------------------------------------
 
+// logEntry is one stored log line split for presentation: the
+// leading "HH:MM:SS" timestamp (the service logf format) and
+// the body, plus a presentation-only classification. The
+// stored text itself is never altered — this only decides
+// the level dot's color and the failure tint (v4 log page).
+type logEntry struct {
+	ts     string
+	body   string
+	failed bool
+	ok     bool
+}
+
+func parseLogEntry(line string) logEntry {
+	e := logEntry{body: line}
+	if len(line) >= 9 && line[2] == ':' && line[5] == ':' && line[8] == ' ' {
+		e.ts, e.body = line[:8], line[9:]
+	}
+	// The log stream is diagnostic-grade English (service
+	// logf + kernel lines); the patterns below match its
+	// stable failure/success shapes — the LogFailure form
+	// "<stage> failed: <err>", connect/fetch/refresh failure
+	// lines, kernel [error] lines, and the connect/refresh
+	// success lines. Per-node sweep chatter ("check …: no
+	// response", import summaries) intentionally stays
+	// neutral: a 99-node sweep must not flood the page red.
+	// These are match patterns over log content, never text
+	// shown to the user (whitelisted in tools/i18ncheck).
+	switch {
+	case strings.Contains(e.body, "[error]") ||
+		strings.Contains(e.body, " failed:") ||
+		strings.Contains(e.body, " failed,") ||
+		strings.Contains(e.body, " failed "):
+		e.failed = true
+	case strings.Contains(e.body, "connected:") ||
+		strings.Contains(e.body, "connected to") ||
+		strings.Contains(e.body, "refreshed:") ||
+		strings.Contains(e.body, "source enabled"):
+		e.ok = true
+	}
+	return e
+}
+
+// layoutLogs is the v4 log page: title + local-only note,
+// entries as one continuous card (level dot + body + time),
+// failure entries tinted, a watermark hint block under the
+// list ("problems' reasons land here — a screenshot locates
+// fastest"), and a watermark empty state with the clear
+// action disabled while there is nothing to clear.
 func (a *App) layoutLogs(gtx layout.Context) layout.Dimensions {
 	lines := a.svc.Logs().Lines()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -1662,28 +2029,150 @@ func (a *App) layoutLogs(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{
 				Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(12),
 			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(a.sectionTitle(a.T("log.title", nil))),
-					layout.Flexed(1, layout.Spacer{}.Layout),
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return a.iconTextButton(gtx, &a.clearLog, iconTrash, a.T("log.clear", nil), pal.Primary)
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(a.sectionTitle(a.T("log.title", nil))),
+							layout.Flexed(1, layout.Spacer{}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								fg := pal.PrimaryText
+								if len(lines) == 0 {
+									fg = pal.Disabled // nothing to clear
+								}
+								return a.iconTextButton(gtx, &a.clearLog, iconTrash, a.T("log.clear", nil), fg)
+							}),
+						)
 					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+					layout.Rigid(a.lbl(12, font.Normal, pal.Hint, a.T("log.local_note", nil)).Layout),
 				)
 			})
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if len(lines) == 0 {
-				return layout.Inset{Left: unit.Dp(dpMargin), Top: unit.Dp(12)}.Layout(gtx,
-					a.lbl(13, font.Normal, pal.Secondary, a.T("log.empty", nil)).Layout)
-			}
-			return material.List(a.th, &a.logList).Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
+				// Watermark empty state (same visual language
+				// as the zero-node first screen).
 				return layout.Inset{
-					Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
-					Top: unit.Dp(2), Bottom: unit.Dp(2),
-				}.Layout(gtx, a.lbl(12, font.Normal, pal.Secondary, lines[i]).Layout)
-			})
+					Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin), Top: unit.Dp(40),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(watermarkEye),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+						layout.Rigid(a.lbl(15, font.Bold, pal.Text, a.T("log.empty", nil)).Layout),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							l := a.lblWrap(12.5, 18, font.Normal, pal.Secondary, a.T("log.hint", nil), 3)
+							l.Alignment = text.Middle
+							return l.Layout(gtx)
+						}),
+					)
+				})
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return material.List(a.th, &a.logList).Layout(gtx, len(lines), func(gtx layout.Context, i int) layout.Dimensions {
+						return a.layoutLogEntry(gtx, lines[i], i == 0, i == len(lines)-1)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{
+						Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
+						Top: unit.Dp(12), Bottom: unit.Dp(12),
+					}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								eyeGlyph(gtx, 44, 32, pal.Border, true, false, 2.2)
+								return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(44)), gtx.Dp(unit.Dp(32)))}
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+							layout.Flexed(1, a.lblWrap(12, 17, font.Normal, pal.Hint, a.T("log.hint", nil), 3).Layout),
+						)
+					})
+				}),
+			)
 		}),
 	)
+}
+
+// layoutLogEntry renders one log line as a segment of the
+// page's single continuous card: the first segment rounds the
+// top corners, the last rounds the bottom, hairlines separate
+// the rest. Failure entries carry the danger tint.
+func (a *App) layoutLogEntry(gtx layout.Context, line string, first, last bool) layout.Dimensions {
+	e := parseLogEntry(line)
+	return layout.Inset{
+		Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
+	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				size := gtx.Constraints.Min
+				bg := pal.Card
+				if e.failed {
+					bg = pal.DangerBg
+				}
+				r := gtx.Dp(unit.Dp(dpCardRad))
+				rr := clip.RRect{Rect: image.Rect(0, 0, size.X, size.Y)}
+				if first {
+					rr.NE, rr.NW = r, r
+				}
+				if last {
+					rr.SE, rr.SW = r, r
+				}
+				paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+				if !first {
+					// Hairline aligned past the level dot.
+					x0 := gtx.Dp(unit.Dp(38))
+					paint.FillShape(gtx.Ops, pal.Border, clip.Rect(image.Rect(x0, 0, size.X-gtx.Dp(unit.Dp(14)), gtx.Dp(unit.Dp(1)))).Op())
+				}
+				// Card side edges.
+				paint.FillShape(gtx.Ops, pal.Border, clip.Rect(image.Rect(0, 0, gtx.Dp(unit.Dp(1)), size.Y)).Op())
+				paint.FillShape(gtx.Ops, pal.Border, clip.Rect(image.Rect(size.X-gtx.Dp(unit.Dp(1)), 0, size.X, size.Y)).Op())
+				if first {
+					paint.FillShape(gtx.Ops, pal.Border, clip.Rect(image.Rect(0, 0, size.X, gtx.Dp(unit.Dp(1)))).Op())
+				}
+				if last {
+					paint.FillShape(gtx.Ops, pal.Border, clip.Rect(image.Rect(0, size.Y-gtx.Dp(unit.Dp(1)), size.X, size.Y)).Op())
+				}
+				return layout.Dimensions{Size: size}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				return layout.Inset{
+					Left: unit.Dp(14), Right: unit.Dp(14),
+					Top: unit.Dp(9), Bottom: unit.Dp(9),
+				}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					dotCol := pal.Hint
+					if e.failed {
+						dotCol = pal.Danger
+					} else if e.ok {
+						dotCol = pal.Success
+					}
+					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Top: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								d := gtx.Dp(unit.Dp(8))
+								paint.FillShape(gtx.Ops, dotCol, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
+								return layout.Dimensions{Size: image.Pt(d, d)}
+							})
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							rows := []layout.FlexChild{
+								layout.Rigid(a.lblWrap(12.5, 17.5, font.Normal, pal.Text, e.body, 3).Layout),
+							}
+							if e.ts != "" {
+								rows = append(rows,
+									layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+									layout.Rigid(a.lbl(11, font.Normal, pal.Hint, e.ts).Layout),
+								)
+							}
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+						}),
+					)
+				})
+			}),
+		)
+	})
 }
 
 // --- Settings tab ------------------------------------------------------
@@ -1697,11 +2186,11 @@ func (a *App) layoutSettings(gtx layout.Context) layout.Dimensions {
 			Left: unit.Dp(dpMargin), Right: unit.Dp(dpMargin),
 			Top: unit.Dp(12), Bottom: unit.Dp(12),
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			// v4: no page-internal title duplicating the tab
+			// name (audit A11) — group titles lead directly.
 			children := []layout.FlexChild{
-				layout.Rigid(a.sectionTitle(a.T("settings.title", nil))),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
-				// Background tiers (v3): four complete token
-				// sets, applied immediately and persisted.
+				// Background tiers: four complete token sets,
+				// applied immediately and persisted.
 				layout.Rigid(a.cardTitle(a.T("theme.title", nil))),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 				layout.Rigid(a.layoutThemeRow),
@@ -1714,36 +2203,38 @@ func (a *App) layoutSettings(gtx layout.Context) layout.Dimensions {
 			}
 			children = append(children,
 				layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
-				// Language: compact radio rows with dividers,
-				// no card (v3 settings pattern).
+				// Language: v4 — the same card + row type as
+				// every other settings group.
 				layout.Rigid(a.cardTitle(a.T("settings.language", nil))),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					langs := a.languages()
-					rows := []layout.FlexChild{}
-					for i, lang := range langs {
-						lang := lang
-						if i > 0 {
-							rows = append(rows, layout.Rigid(a.divider44))
-						}
-						btn := a.langButton(lang)
-						if btn.Clicked(gtx) {
-							a.applyLanguage(lang)
-						}
-						rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							name := lang
-							if p, err := packName(lang); err == nil {
-								name = p
+					return cardShell(gtx, func(gtx layout.Context) layout.Dimensions {
+						langs := a.languages()
+						rows := []layout.FlexChild{}
+						for i, lang := range langs {
+							lang := lang
+							if i > 0 {
+								rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return a.dividerInset(gtx, 43)
+								}))
 							}
-							return a.langRow(gtx, btn, name, a.langEnum.Value == lang)
-						}))
-					}
-					rows = append(rows,
-						layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-						layout.Rigid(a.lbl(11.5, font.Normal, pal.Hint, a.T("settings.language_note", nil)).Layout),
-					)
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+							btn := a.langButton(lang)
+							if btn.Clicked(gtx) {
+								a.applyLanguage(lang)
+							}
+							rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								name := lang
+								if p, err := packName(lang); err == nil {
+									name = p
+								}
+								return a.radioRow(gtx, btn, name, a.langEnum.Value == lang)
+							}))
+						}
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+					})
 				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(a.lbl(11.5, font.Normal, pal.Hint, a.T("settings.language_note", nil)).Layout),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
 				// Protocol preference: option groups (v3).
 				layout.Rigid(a.cardTitle(a.T("pref.title", nil))),
@@ -1815,33 +2306,6 @@ func (a *App) layoutSettings(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-// langRow is one compact language option row (64dp guide):
-// radio + name, whole row clickable.
-func (a *App) langRow(gtx layout.Context, btn *widget.Clickable, name string, selected bool) layout.Dimensions {
-	return material.Clickable(gtx, btn, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(52))
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return a.radio(gtx, selected, true)
-			}),
-			layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-			layout.Rigid(a.lbl(15, font.Normal, pal.Text, name).Layout),
-		)
-	})
-}
-
-// divider44 is a hairline indented to the option groups' text
-// column (44dp from the content edge: 12 group padding + 22
-// radio + 10 gap).
-func (a *App) divider44(gtx layout.Context) layout.Dimensions {
-	return layout.Inset{Left: unit.Dp(44)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		h := gtx.Dp(unit.Dp(1))
-		w := gtx.Constraints.Max.X
-		paint.FillShape(gtx.Ops, pal.Border, clip.Rect{Max: image.Pt(w, h)}.Op())
-		return layout.Dimensions{Size: image.Pt(w, h)}
-	})
-}
-
 // layoutThemeRow renders the four background swatches with
 // their names; a tap applies and persists the tier at once.
 func (a *App) layoutThemeRow(gtx layout.Context) layout.Dimensions {
@@ -1867,7 +2331,7 @@ func (a *App) layoutThemeRow(gtx layout.Context) layout.Dimensions {
 			a.svc.SetTheme(t.value)
 		}
 		children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return material.Clickable(gtx, &a.themeBtns[i], func(gtx layout.Context) layout.Dimensions {
+			return a.themeBtns[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1883,10 +2347,11 @@ func (a *App) layoutThemeRow(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, children...)
 }
 
-// layoutPrefGroups renders the protocol-preference options as
-// v3 option groups, followed by the post-hoc fallback line
-// (only after an auto-select actually fell back) and the
-// weak-encryption note.
+// layoutPrefGroups renders the protocol-preference options
+// as one v4 settings card (unified row type, dividers),
+// followed by the post-hoc fallback line (only after an
+// auto-select actually fell back) and the weak-encryption
+// note.
 func (a *App) layoutPrefGroups(gtx layout.Context) layout.Dimensions {
 	pref := a.svc.ProtocolPref()
 	opts := []struct{ value, titleKey, descKey string }{
@@ -1894,20 +2359,28 @@ func (a *App) layoutPrefGroups(gtx layout.Context) layout.Dimensions {
 		{service.ProtocolPrefSpeed, "pref.speed", "pref.speed_desc"},
 		{service.ProtocolPrefCompat, "pref.compat", "pref.compat_desc"},
 	}
-	rows := []layout.FlexChild{}
-	for i, o := range opts {
-		o := o
-		if i > 0 {
-			rows = append(rows, layout.Rigid(a.divider44))
-		}
-		btn := a.prefButton(o.value)
-		if btn.Clicked(gtx) {
-			a.svc.SetProtocolPref(o.value)
-		}
-		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.optionGroup(gtx, btn, pref == o.value, true,
-				a.T(o.titleKey, nil), a.T(o.descKey, nil), "")
-		}))
+	rows := []layout.FlexChild{
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return cardShell(gtx, func(gtx layout.Context) layout.Dimensions {
+				inner := []layout.FlexChild{}
+				for i, o := range opts {
+					o := o
+					if i > 0 {
+						inner = append(inner, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.dividerInset(gtx, 43)
+						}))
+					}
+					btn := a.prefButton(o.value)
+					if btn.Clicked(gtx) {
+						a.svc.SetProtocolPref(o.value)
+					}
+					inner = append(inner, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.radioDescRow(gtx, btn, a.T(o.titleKey, nil), a.T(o.descKey, nil), "", pref == o.value, true)
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, inner...)
+			})
+		}),
 	}
 	if name, fellBack, ok := a.svc.LastAutoSelect(); ok && fellBack {
 		rows = append(rows,
@@ -1931,44 +2404,47 @@ func (a *App) layoutPrefGroups(gtx layout.Context) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }
 
-// layoutModeGroups renders the run-mode options as v3 option
-// groups; an unavailable mode stays listed, disabled, with its
-// real reason inside the group.
+// layoutModeGroups renders the run-mode options as one v4
+// settings card; an unavailable mode stays listed, disabled,
+// with its real reason line inside its own row.
 func (a *App) layoutModeGroups(gtx layout.Context) layout.Dimensions {
 	mode := a.svc.Mode()
-	rows := []layout.FlexChild{}
-	for i, opt := range a.svc.RunModeOptions() {
-		opt := opt
-		if i > 0 {
-			rows = append(rows, layout.Rigid(a.divider44))
-		}
-		var titleKey, descKey string
-		switch opt.Mode {
-		case kernel.ModeTUN:
-			titleKey, descKey = "mode.tun", "mode.tun_desc"
-		case kernel.ModeSystemProxy:
-			titleKey, descKey = "mode.system_proxy", "mode.system_proxy_desc"
-		default:
-			titleKey, descKey = "mode.manual", "mode.manual_desc"
-		}
-		reason := ""
-		if !opt.Available {
-			if opt.Reason == service.ModeReasonVersion {
-				reason = a.T("mode.reason_version", nil)
-			} else {
-				reason = a.T("mode.reason_platform", nil)
+	return cardShell(gtx, func(gtx layout.Context) layout.Dimensions {
+		inner := []layout.FlexChild{}
+		for i, opt := range a.svc.RunModeOptions() {
+			opt := opt
+			if i > 0 {
+				inner = append(inner, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return a.dividerInset(gtx, 43)
+				}))
 			}
+			var titleKey, descKey string
+			switch opt.Mode {
+			case kernel.ModeTUN:
+				titleKey, descKey = "mode.tun", "mode.tun_desc"
+			case kernel.ModeSystemProxy:
+				titleKey, descKey = "mode.system_proxy", "mode.system_proxy_desc"
+			default:
+				titleKey, descKey = "mode.manual", "mode.manual_desc"
+			}
+			reason := ""
+			if !opt.Available {
+				if opt.Reason == service.ModeReasonVersion {
+					reason = a.T("mode.reason_version", nil)
+				} else {
+					reason = a.T("mode.reason_platform", nil)
+				}
+			}
+			btn := a.modeButton(string(opt.Mode))
+			if opt.Available && btn.Clicked(gtx) {
+				a.svc.SetMode(opt.Mode)
+			}
+			inner = append(inner, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return a.radioDescRow(gtx, btn, a.T(titleKey, nil), a.T(descKey, nil), reason, mode == opt.Mode, opt.Available)
+			}))
 		}
-		btn := a.modeButton(string(opt.Mode))
-		if opt.Available && btn.Clicked(gtx) {
-			a.svc.SetMode(opt.Mode)
-		}
-		rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return a.optionGroup(gtx, btn, mode == opt.Mode, opt.Available,
-				a.T(titleKey, nil), a.T(descKey, nil), reason)
-		}))
-	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, inner...)
+	})
 }
 
 func packName(lang string) (string, error) {

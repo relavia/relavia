@@ -72,6 +72,20 @@ func TestPaletteContrastAA(t *testing.T) {
 		{"Danger/Bg", func(p Palette) color.NRGBA { return p.Danger }, func(p Palette) color.NRGBA { return p.Bg }},
 		{"White/Primary", func(p Palette) color.NRGBA { return p.White }, func(p Palette) color.NRGBA { return p.Primary }},
 		{"White/DangerFill", func(p Palette) color.NRGBA { return p.White }, func(p Palette) color.NRGBA { return p.DangerFill }},
+		// v4 pairs: text on the page gradient's TOP stop (the
+		// header band and the first lines of every page sit on
+		// it), and white panel text on every hero gradient
+		// stop (the panel's lightest point is its bottom).
+		{"Text/BgTop", func(p Palette) color.NRGBA { return p.Text }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"Secondary/BgTop", func(p Palette) color.NRGBA { return p.Secondary }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"Hint/BgTop", func(p Palette) color.NRGBA { return p.Hint }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"PrimaryText/BgTop", func(p Palette) color.NRGBA { return p.PrimaryText }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"Success/BgTop", func(p Palette) color.NRGBA { return p.Success }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"Warn/BgTop", func(p Palette) color.NRGBA { return p.Warn }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"Danger/BgTop", func(p Palette) color.NRGBA { return p.Danger }, func(p Palette) color.NRGBA { return p.BgTop }},
+		{"White/HeroA", func(p Palette) color.NRGBA { return p.White }, func(p Palette) color.NRGBA { return p.HeroA }},
+		{"White/HeroB", func(p Palette) color.NRGBA { return p.White }, func(p Palette) color.NRGBA { return p.HeroB }},
+		{"White/HeroC", func(p Palette) color.NRGBA { return p.White }, func(p Palette) color.NRGBA { return p.HeroC }},
 	}
 	for name, p := range palettes {
 		for _, pr := range pairs {
@@ -80,6 +94,20 @@ func TestPaletteContrastAA(t *testing.T) {
 			if r < 4.5 {
 				t.Errorf("%s: %s contrast %.2f < 4.5 (WCAG AA)", name, pr.name, r)
 			}
+		}
+	}
+	// Tier-independent pairs: the hero panel's white-filled
+	// buttons carry the fixed on-white text colors in every
+	// tier.
+	white := nrgba(0xFF, 0xFF, 0xFF)
+	for name, fg := range map[string]color.NRGBA{
+		"onWhitePrimary/White": onWhitePrimary,
+		"onWhiteDanger/White":  onWhiteDanger,
+	} {
+		r := contrastRatio(fg, white)
+		t.Logf("%s = %.2f", name, r)
+		if r < 4.5 {
+			t.Errorf("%s contrast %.2f < 4.5 (WCAG AA)", name, r)
 		}
 	}
 }

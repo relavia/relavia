@@ -272,9 +272,17 @@ Android 侧有 AccessibilityNodeInfo 桥接但 TalkBack 未真机验。
 
 ## P3
 
-### KI-14 触控目标高度未达 48dp 指南
-主按钮 37dp、单选行 34dp（达 WCAG AA 的 24dp 下限）；统一整改
-需帧验证配合。来源：docs/step18-本地化与无障碍基线.md §6。
+### KI-14 触控目标高度未达 48dp 指南 —— 已关闭（2026-11-20，v4 批）
+Step 18 实测的主按钮 37dp、单选行 34dp 已按 v4 触控表逐项还清，
+并经帧验证（docs/android产品界面接入.md §12）：底部标签整格 ≥64dp
+高、hero 主按钮 60dp、风险弹层同意 56dp / 暂不 48dp、节点整行
+72–76dp、展开条三按钮 48dp 等分、收藏星视觉 22dp 而命中 48×48、
+为你选好连接圆钮视觉 40dp 而命中 48×48、分组片视觉 40dp 而命中
+48dp、搜索清除 × 命中 48×48、设置选项行 ≥56dp 整行、主题预览块
+56dp 且整卡（含标签）为命中区、导入方式行 ≥88dp 且卡内按钮命中
+48dp。视觉小于 48dp 的元素一律以留白补足命中区。来源：
+docs/step18-本地化与无障碍基线.md §6；销账依据：
+docs/ui-mockups/README.md v4 触控表 + 上述 §12 帧验。
 
 ### KI-15 Android SSID 类规则不匹配
 壳未持 ACCESS_WIFI_STATE / 定位权限，ReadWIFIState 恒空，SSID

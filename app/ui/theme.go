@@ -40,8 +40,17 @@ import (
 // docs (android UI integration doc, v3 section).
 
 // Palette is one complete background tier's token set.
+//
+// v4 ("Tongxin", docs/ui-mockups/README.md v4 chapter): the
+// page background is a two-stop vertical gradient (BgTop ->
+// Bg), cards carry a real shadow on the light tier (Shadow;
+// zero alpha on the dark tiers, which separate by border
+// instead), and the first-screen hero is a deep brand-blue
+// gradient panel (HeroA -> HeroB at 57% -> HeroC) in every
+// tier — the screen's single visual protagonist.
 type Palette struct {
-	Bg          color.NRGBA // page background
+	Bg          color.NRGBA // page background gradient bottom
+	BgTop       color.NRGBA // page background gradient top
 	Card        color.NRGBA // card / sheet surface
 	Border      color.NRGBA // hairlines, card edges
 	Primary     color.NRGBA // filled primary actions
@@ -62,6 +71,11 @@ type Palette struct {
 	PillIdle    color.NRGBA
 	Disabled    color.NRGBA // inactive controls (WCAG-exempt)
 	Scrim       color.NRGBA // modal scrim over the page
+	HeroA       color.NRGBA // hero gradient start (top)
+	HeroB       color.NRGBA // hero gradient middle (57%)
+	HeroC       color.NRGBA // hero gradient end (bottom)
+	Shadow      color.NRGBA // card shadow (light tier only)
+	HeroShadow  color.NRGBA // hero panel shadow (light tier only)
 }
 
 func nrgba(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 0xFF} }
@@ -71,20 +85,30 @@ func nrgba(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 
 // passes WCAG AA (Hint #949CA8 -> #6A7280, Warn #C97C12 ->
 // #9A6206, Success #12966C -> #0B7050, Danger #D03C3C ->
 // #BE3232); hues are unchanged, only luminance moved.
+// v4 light tier (token table in docs/ui-mockups/README.md).
+// Two micro-adjustments under the Step 18 method, same as the
+// v3 deepening precedent: Warn text is one notch deeper
+// (#8F5A05) so the table's #FBEED3 tint still clears AA
+// (#9A6206 on #FBEED3 measures 4.43), Hint is #646C78 so it
+// clears AA on the new gradient top #EDF0F7 (#6A7280 measures
+// ~4.25 there), and the hero gradient's lightest stop is
+// #4669E6 so white body text on the panel clears AA at every
+// stop (#5279F2 measures ~3.9).
 var paletteLight = Palette{
 	Bg:          nrgba(0xF6, 0xF7, 0xF9),
+	BgTop:       nrgba(0xED, 0xF0, 0xF7),
 	Card:        nrgba(0xFF, 0xFF, 0xFF),
-	Border:      nrgba(0xE4, 0xE7, 0xEC),
+	Border:      nrgba(0xE3, 0xE7, 0xF0),
 	Primary:     nrgba(0x2E, 0x54, 0xEB),
 	PrimaryText: nrgba(0x23, 0x40, 0xB4),
 	PrimaryLite: nrgba(0xE8, 0xEE, 0xFE),
 	Text:        nrgba(0x1A, 0x1D, 0x21),
 	Secondary:   nrgba(0x62, 0x6A, 0x78),
-	Hint:        nrgba(0x6A, 0x72, 0x80),
+	Hint:        nrgba(0x64, 0x6C, 0x78),
 	Success:     nrgba(0x0B, 0x70, 0x50),
 	SuccessBg:   nrgba(0xDE, 0xF5, 0xEC),
-	Warn:        nrgba(0x9A, 0x62, 0x06),
-	WarnBg:      nrgba(0xFB, 0xF3, 0xE4),
+	Warn:        nrgba(0x8F, 0x5A, 0x05),
+	WarnBg:      nrgba(0xFB, 0xEE, 0xD3),
 	Danger:      nrgba(0xBE, 0x32, 0x32),
 	DangerBg:    nrgba(0xFC, 0xE9, 0xE9),
 	DangerFill:  nrgba(0xBE, 0x32, 0x32),
@@ -93,59 +117,78 @@ var paletteLight = Palette{
 	PillIdle:    nrgba(0xED, 0xEF, 0xF2),
 	Disabled:    nrgba(0xB6, 0xBD, 0xC9),
 	Scrim:       color.NRGBA{A: 0x66},
+	HeroA:       nrgba(0x23, 0x2F, 0x6E),
+	HeroB:       nrgba(0x2E, 0x54, 0xEB),
+	HeroC:       nrgba(0x46, 0x69, 0xE6),
+	Shadow:      color.NRGBA{R: 0x17, G: 0x20, B: 0x4D, A: 0x12},
+	HeroShadow:  color.NRGBA{R: 0x23, G: 0x2F, B: 0x6E, A: 0x59},
 }
 
 // paletteNavy is the deep-blue tier sampled from the approved
 // competitor reference (teardown notes): blue-black surfaces,
 // never pure black, light-blue accent text on dark surfaces.
+// v4 deep-blue tier (token table in docs/ui-mockups/README.md):
+// blue-tinted surfaces, brighter semantic text on the table's
+// dark tints, no shadows (the brighter border separates
+// layers instead).
 var paletteNavy = Palette{
-	Bg:          nrgba(0x11, 0x15, 0x18),
-	Card:        nrgba(0x19, 0x1D, 0x20),
-	Border:      nrgba(0x26, 0x2B, 0x2F),
+	Bg:          nrgba(0x11, 0x15, 0x1D),
+	BgTop:       nrgba(0x0C, 0x10, 0x17),
+	Card:        nrgba(0x17, 0x1C, 0x26),
+	Border:      nrgba(0x26, 0x2D, 0x3D),
 	Primary:     nrgba(0x2E, 0x54, 0xEB),
-	PrimaryText: nrgba(0x8F, 0xA8, 0xFF),
-	PrimaryLite: nrgba(0x1E, 0x2A, 0x4A),
-	Text:        nrgba(0xF2, 0xF4, 0xF7),
-	Secondary:   nrgba(0x9A, 0xA1, 0xA8),
-	Hint:        nrgba(0x86, 0x8E, 0x99),
-	Success:     nrgba(0x43, 0xD6, 0x9B),
+	PrimaryText: nrgba(0x8F, 0xA9, 0xFF),
+	PrimaryLite: nrgba(0x22, 0x33, 0x5F),
+	Text:        nrgba(0xED, 0xF1, 0xF7),
+	Secondary:   nrgba(0x9A, 0xA6, 0xBC),
+	Hint:        nrgba(0x8E, 0x99, 0xAE),
+	Success:     nrgba(0x4C, 0xC3, 0x8A),
 	SuccessBg:   nrgba(0x12, 0x35, 0x28),
-	Warn:        nrgba(0xE8, 0xA3, 0x3D),
-	WarnBg:      nrgba(0x33, 0x27, 0x0E),
-	Danger:      nrgba(0xFF, 0x9C, 0x9C),
-	DangerBg:    nrgba(0x38, 0x1E, 0x1E),
+	Warn:        nrgba(0xE8, 0xB3, 0x4B),
+	WarnBg:      nrgba(0x3A, 0x2C, 0x10),
+	Danger:      nrgba(0xFF, 0x9D, 0x8A),
+	DangerBg:    nrgba(0x3D, 0x1A, 0x1A),
 	DangerFill:  nrgba(0xC2, 0x43, 0x43),
 	White:       nrgba(0xFF, 0xFF, 0xFF),
-	InputBg:     nrgba(0x14, 0x18, 0x1B),
-	PillIdle:    nrgba(0x20, 0x26, 0x2B),
-	Disabled:    nrgba(0x5A, 0x62, 0x6B),
+	InputBg:     nrgba(0x10, 0x14, 0x1D),
+	PillIdle:    nrgba(0x1C, 0x23, 0x31),
+	Disabled:    nrgba(0x5A, 0x65, 0x77),
 	Scrim:       color.NRGBA{A: 0x99},
+	HeroA:       nrgba(0x14, 0x1B, 0x45),
+	HeroB:       nrgba(0x27, 0x43, 0xB8),
+	HeroC:       nrgba(0x3D, 0x63, 0xD8),
 }
 
-// paletteInk is the ink-black tier: pure-black page, neutral
-// grey surfaces, for OLED battery saving.
+// paletteInk is the v4 ink-black tier: pure-black page
+// gradient, neutral grey surfaces, for OLED battery saving.
+// Semantic tints match the deep-blue tier per the v4 token
+// table.
 var paletteInk = Palette{
-	Bg:          nrgba(0x00, 0x00, 0x00),
+	Bg:          nrgba(0x0A, 0x0A, 0x0A),
+	BgTop:       nrgba(0x00, 0x00, 0x00),
 	Card:        nrgba(0x14, 0x14, 0x14),
 	Border:      nrgba(0x26, 0x26, 0x26),
 	Primary:     nrgba(0x2E, 0x54, 0xEB),
-	PrimaryText: nrgba(0x8F, 0xA8, 0xFF),
-	PrimaryLite: nrgba(0x1B, 0x24, 0x40),
-	Text:        nrgba(0xF5, 0xF5, 0xF5),
-	Secondary:   nrgba(0xA3, 0xA3, 0xA3),
+	PrimaryText: nrgba(0x8F, 0xA9, 0xFF),
+	PrimaryLite: nrgba(0x1D, 0x2A, 0x52),
+	Text:        nrgba(0xF2, 0xF2, 0xF2),
+	Secondary:   nrgba(0x9A, 0x9A, 0x9A),
 	Hint:        nrgba(0x8F, 0x8F, 0x8F),
-	Success:     nrgba(0x43, 0xD6, 0x9B),
-	SuccessBg:   nrgba(0x0E, 0x2E, 0x22),
-	Warn:        nrgba(0xE8, 0xA3, 0x3D),
-	WarnBg:      nrgba(0x2E, 0x23, 0x0C),
-	Danger:      nrgba(0xFF, 0x9C, 0x9C),
-	DangerBg:    nrgba(0x33, 0x1B, 0x1B),
+	Success:     nrgba(0x4C, 0xC3, 0x8A),
+	SuccessBg:   nrgba(0x12, 0x35, 0x28),
+	Warn:        nrgba(0xE8, 0xB3, 0x4B),
+	WarnBg:      nrgba(0x3A, 0x2C, 0x10),
+	Danger:      nrgba(0xFF, 0x9D, 0x8A),
+	DangerBg:    nrgba(0x3D, 0x1A, 0x1A),
 	DangerFill:  nrgba(0xC2, 0x43, 0x43),
 	White:       nrgba(0xFF, 0xFF, 0xFF),
 	InputBg:     nrgba(0x0A, 0x0A, 0x0A),
 	PillIdle:    nrgba(0x1C, 0x1C, 0x1C),
 	Disabled:    nrgba(0x59, 0x59, 0x59),
 	Scrim:       color.NRGBA{A: 0xB3},
+	HeroA:       nrgba(0x10, 0x13, 0x2E),
+	HeroB:       nrgba(0x22, 0x37, 0x9E),
+	HeroC:       nrgba(0x33, 0x50, 0xC8),
 }
 
 // pal is the active palette (see the Palette comment). It
@@ -156,13 +199,17 @@ var pal = paletteLight
 const (
 	dpMargin     = 16 // page content margin
 	dpCardGap    = 10 // vertical gap between cards
-	dpCardRad    = 10 // card corner radius
-	dpBtnRad     = 8  // button corner radius
-	dpBtnH       = 48 // standard action button height (v3 token)
-	dpChipH      = 40 // group filter chip height (v3 token, full-round)
-	dpHeroH      = 56 // hero primary button height (first-screen one-tap connect)
+	dpCardRad    = 20 // card corner radius (v4 token)
+	dpBtnRad     = 12 // button corner radius (v4 token)
+	dpBtnH       = 48 // standard action button height
+	dpChipH      = 40 // group filter chip visual height (hit area 48)
+	dpHeroH      = 56 // risk-sheet primary button height (v4 touch table)
 	dpRowH       = 72 // two-line node row height (warning rows: 84)
-	dpRadiusHero = 16 // hero button corner radius
+	dpRadiusHero = 16 // risk-sheet button corner radius
+	dpHeroRad    = 24 // v4 hero panel corner radius
+	dpPanelBtnH  = 60 // v4 hero panel main button height
+	dpTabBarH    = 64 // v4 bottom tab bar height (plus bottom safe inset)
+	dpBadge      = 96 // v4 pupil status badge size
 )
 
 // lbl builds a label with explicit size, weight and color.
@@ -241,6 +288,106 @@ func strokeRRect(gtx layout.Context, size image.Point, rad int, col color.NRGBA)
 	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: path, Width: float32(gtx.Dp(unit.Dp(1)))}.Op())
 }
 
+// shadowRRect paints a soft card shadow: Gio has no blur, so
+// the shadow is a few rounded rects at growing offsets and
+// shrinking alpha (v4 implementation note in the mockup
+// README). The shadow color carries the total alpha; tiers
+// with a zero-alpha shadow color (deep blue / ink) skip it.
+func shadowRRect(gtx layout.Context, size image.Point, rad int, col color.NRGBA, dyDp int) {
+	if col.A == 0 || size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	steps := 3
+	for i := steps; i >= 1; i-- {
+		c := col
+		c.A = col.A / uint8(steps+1) * uint8(steps+1-i)
+		if c.A == 0 {
+			continue
+		}
+		off := gtx.Dp(unit.Dp(dyDp * i / steps))
+		spread := gtx.Dp(unit.Dp(2 * i / steps))
+		rect := image.Rect(-spread, off-spread, size.X+spread, size.Y+off+spread)
+		r := gtx.Dp(unit.Dp(rad + 2*i/steps))
+		rr := clip.RRect{Rect: rect, NE: r, NW: r, SE: r, SW: r}
+		paint.FillShape(gtx.Ops, c, rr.Op(gtx.Ops))
+	}
+}
+
+// fillVGradient paints a two-stop vertical gradient over the
+// size (top -> bottom).
+func fillVGradient(gtx layout.Context, size image.Point, top, bottom color.NRGBA) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	paint.LinearGradientOp{
+		Stop1:  f32.Pt(0, 0),
+		Color1: top,
+		Stop2:  f32.Pt(0, float32(size.Y)),
+		Color2: bottom,
+	}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+}
+
+// fillHeroGradient paints the v4 hero panel: the palette's
+// three-stop deep-blue gradient (A -> B at 57% -> C), clipped
+// to the panel's rounded outline.
+func fillHeroGradient(gtx layout.Context, size image.Point, rad int) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	r := gtx.Dp(unit.Dp(rad))
+	rr := clip.RRect{
+		Rect: image.Rect(0, 0, size.X, size.Y),
+		NE:   r, NW: r, SE: r, SW: r,
+	}
+	defer rr.Push(gtx.Ops).Pop()
+	mid := size.Y * 57 / 100
+	// Top segment A -> B.
+	func() {
+		defer clip.Rect(image.Rect(0, 0, size.X, mid+1)).Push(gtx.Ops).Pop()
+		paint.LinearGradientOp{
+			Stop1:  f32.Pt(0, 0),
+			Color1: pal.HeroA,
+			Stop2:  f32.Pt(0, float32(mid)),
+			Color2: pal.HeroB,
+		}.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+	}()
+	// Bottom segment B -> C.
+	func() {
+		defer clip.Rect(image.Rect(0, mid, size.X, size.Y)).Push(gtx.Ops).Pop()
+		paint.LinearGradientOp{
+			Stop1:  f32.Pt(0, float32(mid)),
+			Color1: pal.HeroB,
+			Stop2:  f32.Pt(0, float32(size.Y)),
+			Color2: pal.HeroC,
+		}.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+	}()
+}
+
+// buttonEdge paints the v4 filled-button treatment: a 2dp
+// darker strip along the bottom edge, clipped to the button's
+// rounded outline (the mockup README's implementation note
+// replacing a drop shadow on filled buttons).
+func buttonEdge(gtx layout.Context, size image.Point, rad int, bg color.NRGBA) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	darker := bg
+	darker.R = uint8(uint16(bg.R) * 82 / 100)
+	darker.G = uint8(uint16(bg.G) * 82 / 100)
+	darker.B = uint8(uint16(bg.B) * 82 / 100)
+	r := gtx.Dp(unit.Dp(rad))
+	rr := clip.RRect{
+		Rect: image.Rect(0, 0, size.X, size.Y),
+		NE:   r, NW: r, SE: r, SW: r,
+	}
+	defer rr.Push(gtx.Ops).Pop()
+	edge := image.Rect(0, size.Y-gtx.Dp(unit.Dp(2)), size.X, size.Y)
+	paint.FillShape(gtx.Ops, darker, clip.Rect(edge).Op())
+}
+
 // fullWidth forces a widget to the full available width by
 // raising the minimum width constraint to the maximum. Several
 // Gio widgets (editors, clickables) otherwise size to their
@@ -259,6 +406,7 @@ func surface(gtx layout.Context, accent color.NRGBA, w layout.Widget) layout.Dim
 	return layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			size := gtx.Constraints.Min
+			shadowRRect(gtx, size, dpCardRad, pal.Shadow, 2)
 			fillRRect(gtx, size, dpCardRad, pal.Card)
 			if accent.A != 0 {
 				// Accent bar: a plain rect at the left edge,
@@ -285,6 +433,144 @@ func surface(gtx layout.Context, accent color.NRGBA, w layout.Widget) layout.Dim
 				Left: unit.Dp(14), Right: unit.Dp(14),
 				Top: unit.Dp(12), Bottom: unit.Dp(12),
 			}.Layout(gtx, w)
+		}),
+	)
+}
+
+// cardShell is surface() without content insets: the card
+// chrome (fill, border, shadow, radius) with the content
+// spanning the full card — for grouped-row cards whose rows
+// and dividers manage their own insets (v4 settings groups,
+// import method card, log list card).
+func cardShell(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Constraints.Min
+			shadowRRect(gtx, size, dpCardRad, pal.Shadow, 2)
+			fillRRect(gtx, size, dpCardRad, pal.Card)
+			strokeRRect(gtx, size, dpCardRad, pal.Border)
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return w(gtx)
+		}),
+	)
+}
+
+// On-white button text colors for the hero panel: the panel
+// button is white-filled in EVERY tier, so its text colors
+// are tier-independent deep tones that clear AA on white
+// (the dark tiers' PrimaryText/Danger tints are tuned for
+// dark surfaces and would fail on white).
+var (
+	onWhitePrimary = nrgba(0x23, 0x40, 0xB4)
+	onWhiteDanger  = nrgba(0xBE, 0x32, 0x32)
+)
+
+// panelBtnKind enumerates the v4 hero panel's main buttons.
+type panelBtnKind int
+
+const (
+	panelBtnSolid   panelBtnKind = iota // white fill, primary text
+	panelBtnDanger                      // white fill, danger text (disconnect)
+	panelBtnOutline                     // transparent, white outline + text (cancel)
+)
+
+// panelButton is the hero panel's main action: 60dp tall,
+// radius 16, white-filled on the deep-blue gradient (v4). The
+// outline kind is the connecting state's cancel action.
+func (a *App) panelButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, label string, kind panelBtnKind) layout.Dimensions {
+	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				size := gtx.Constraints.Min
+				switch kind {
+				case panelBtnOutline:
+					// 1.5dp white outline at 70% alpha.
+					oc := color.NRGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xB3}
+					r := gtx.Dp(unit.Dp(dpRadiusHero))
+					rr := clip.RRect{
+						Rect: image.Rect(0, 0, size.X, size.Y),
+						NE:   r, NW: r, SE: r, SW: r,
+					}
+					path := rr.Path(gtx.Ops)
+					paint.FillShape(gtx.Ops, oc, clip.Stroke{Path: path, Width: float32(gtx.Dp(unit.Dp(1.5)))}.Op())
+				default:
+					fillRRect(gtx, size, dpRadiusHero, pal.White)
+				}
+				return layout.Dimensions{Size: size}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min = image.Pt(gtx.Constraints.Max.X, gtx.Dp(unit.Dp(dpPanelBtnH)))
+				fg := onWhitePrimary
+				if kind == panelBtnDanger {
+					fg = onWhiteDanger
+				}
+				if kind == panelBtnOutline {
+					fg = pal.White
+				}
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					if ic == iconNone {
+						return a.lbl(16, font.Bold, fg, label).Layout(gtx)
+					}
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return iconLayout(gtx, ic, 22, fg)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(a.lbl(16, font.Bold, fg, label).Layout),
+					)
+				})
+			}),
+		)
+	})
+}
+
+// latencyState is a node row's right-column latency reading.
+type latencyState int
+
+const (
+	latencyUntested latencyState = iota // hollow pill: not checked yet
+	latencyOK                           // <= 80 ms, green
+	latencySlow                         // 81..200 ms, amber
+	latencyBad                          // no response / check failed, red
+)
+
+// latencyPill renders the v4 node-row latency capsule (26dp):
+// measured values are tinted by band, "no response" is red,
+// and an unchecked node gets a hollow outline pill so the
+// empty state reads as "not measured", not "fast".
+func (a *App) latencyPill(gtx layout.Context, st latencyState, text string) layout.Dimensions {
+	var bg, fg color.NRGBA
+	hollow := false
+	switch st {
+	case latencyOK:
+		bg, fg = pal.SuccessBg, pal.Success
+	case latencySlow:
+		bg, fg = pal.WarnBg, pal.Warn
+	case latencyBad:
+		bg, fg = pal.DangerBg, pal.Danger
+	default:
+		hollow = true
+		fg = pal.Hint
+	}
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Constraints.Min
+			if hollow {
+				strokeRRect(gtx, size, 13, pal.Border)
+			} else {
+				fillRRect(gtx, size, 13, bg)
+			}
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(26))
+			return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Center.Layout(gtx, a.lbl1(11.5, font.Bold, fg, text).Layout)
+				})
 		}),
 	)
 }
@@ -371,6 +657,20 @@ const (
 // kind still reports clicks (the service layer's busy guard
 // already swallows them) — only the presentation changes.
 func (a *App) bigButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, text string, kind btnKind) layout.Dimensions {
+	return a.bigButtonSized(gtx, btn, ic, text, kind, 15, 19, 10, 7)
+}
+
+// bigButtonCompact is bigButton with tighter metrics for the
+// node row's three-way action strip: at 360dp wide the strip
+// leaves each button ~89dp, where the standard metrics
+// (15sp label + 19dp icon + 10dp pads) truncate the longest
+// label ("检查延迟" / "Check latency"). Compact metrics
+// (13.5sp + 16dp + 6dp pads) fit all three languages.
+func (a *App) bigButtonCompact(gtx layout.Context, btn *widget.Clickable, ic iconKind, text string, kind btnKind) layout.Dimensions {
+	return a.bigButtonSized(gtx, btn, ic, text, kind, 13.5, 16, 6, 5)
+}
+
+func (a *App) bigButtonSized(gtx layout.Context, btn *widget.Clickable, ic iconKind, text string, kind btnKind, labelSp, iconDp, padDp, gapDp float32) layout.Dimensions {
 	// In a Flexed slot the size is already exact (Min == Max)
 	// and forcing width inside the button's Stack corrupts the
 	// slot layout (tab row regression, frame probe 2026-11-14);
@@ -397,6 +697,9 @@ func (a *App) bigButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, 
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
 				fillRRect(gtx, size, dpBtnRad, bg)
+				if kind == btnPrimary || kind == btnDanger {
+					buttonEdge(gtx, size, dpBtnRad, bg)
+				}
 				if border.A != 0 {
 					strokeRRect(gtx, size, dpBtnRad, border)
 				}
@@ -414,7 +717,7 @@ func (a *App) bigButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, 
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				}
 				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx,
+					return layout.Inset{Left: unit.Dp(padDp), Right: unit.Dp(padDp)}.Layout(gtx,
 						func(gtx layout.Context) layout.Dimensions {
 							children := []layout.FlexChild{
 								layout.Flexed(1, layout.Spacer{}.Layout),
@@ -422,13 +725,13 @@ func (a *App) bigButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, 
 							if ic != iconNone {
 								children = append(children,
 									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										return iconLayout(gtx, ic, 19, fg)
+										return iconLayout(gtx, ic, int(iconDp), fg)
 									}),
-									layout.Rigid(layout.Spacer{Width: unit.Dp(7)}.Layout),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(gapDp)}.Layout),
 								)
 							}
 							children = append(children,
-								layout.Rigid(a.lbl1(15, font.Bold, fg, text).Layout),
+								layout.Rigid(a.lbl1(unit.Sp(labelSp), font.Bold, fg, text).Layout),
 								layout.Flexed(1, layout.Spacer{}.Layout),
 							)
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
@@ -441,27 +744,34 @@ func (a *App) bigButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, 
 
 // iconTextButton is a compact icon + label button for row
 // actions and inline commands (test / delete / revoke / clear).
+// The visual row stays compact, but the hit area is at least
+// 48dp tall (v4 touch table; Step 18 debt repaid in this
+// batch).
 func (a *App) iconTextButton(gtx layout.Context, btn *widget.Clickable, ic iconKind, text string, fg color.NRGBA) layout.Dimensions {
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(48))
 		return layout.Inset{
 			Left: unit.Dp(5), Right: unit.Dp(5),
 			Top: unit.Dp(5), Bottom: unit.Dp(5),
 		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			// Baseline-anchored icon (see graphicBesideLabel):
+			// a box-centered icon renders low against the
+			// label's visible glyphs with the bundled font.
+			return graphicBesideLabel(gtx, 15, 4, 12.5,
+				func(gtx layout.Context) layout.Dimensions {
 					return iconLayout(gtx, ic, 15, fg)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-				layout.Rigid(a.lbl1(12.5, font.Bold, fg, text).Layout),
-			)
+				},
+				a.lbl1(12.5, font.Bold, fg, text).Layout)
 		})
 	})
 }
 
 // textButton is a borderless colored label button (node row
-// actions, revoke/import links).
+// actions, revoke/import links). Hit area at least 48dp tall
+// (v4 touch table).
 func (a *App) textButton(gtx layout.Context, btn *widget.Clickable, text string, fg color.NRGBA) layout.Dimensions {
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(48))
 		return layout.Inset{
 			Left: unit.Dp(6), Right: unit.Dp(6),
 			Top: unit.Dp(6), Bottom: unit.Dp(6),
@@ -469,76 +779,161 @@ func (a *App) textButton(gtx layout.Context, btn *widget.Clickable, text string,
 	})
 }
 
-// chip is a group filter pill: selected = light primary fill,
-// unselected = white with border.
+// chip is a group filter pill: selected = solid primary fill
+// with white text (v4), unselected = card fill with border.
 func (a *App) chip(gtx layout.Context, btn *widget.Clickable, text string, selected bool) layout.Dimensions {
 	bg, fg := pal.Card, pal.Text
 	var border color.NRGBA
 	if selected {
-		bg, fg = pal.PrimaryLite, pal.PrimaryText
+		bg, fg = pal.Primary, pal.White
 	} else {
 		border = pal.Border
 	}
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Stack{Alignment: layout.Center}.Layout(gtx,
-			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-				size := gtx.Constraints.Min
-				fillRRect(gtx, size, dpChipH/2, bg)
-				if border.A != 0 {
-					strokeRRect(gtx, size, dpChipH/2, border)
-				}
-				return layout.Dimensions{Size: size}
-			}),
-			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(dpChipH))
-				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
-						a.lbl(13, font.Bold, fg, text).Layout)
-				})
-			}),
-		)
+		// The capsule visual is 40dp; the clickable itself is
+		// 48dp tall with the capsule centered (v4 touch table).
+		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(48))
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.Y = 0
+			gtx.Constraints.Max.Y = gtx.Dp(unit.Dp(dpChipH))
+			return chipBody(gtx, bg, fg, border, text, a)
+		})
 	})
 }
 
-// radioRow is a settings language row: ring + dot when selected.
+// chipBody is the chip's 40dp visual capsule.
+func chipBody(gtx layout.Context, bg, fg color.NRGBA, border color.NRGBA, text string, a *App) layout.Dimensions {
+	return layout.Stack{Alignment: layout.Center}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Constraints.Min
+			fillRRect(gtx, size, dpChipH/2, bg)
+			if border.A != 0 {
+				strokeRRect(gtx, size, dpChipH/2, border)
+			}
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(dpChipH))
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx,
+					a.lbl(13, font.Bold, fg, text).Layout)
+			})
+		}),
+	)
+}
+
+// radioRing draws the 19dp settings radio: a 2dp ring in the
+// given color, with a filled primary center dot when dot is
+// true.
+func radioRing(gtx layout.Context, ring color.NRGBA, dot bool) layout.Dimensions {
+	d := gtx.Dp(unit.Dp(19))
+	paint.FillShape(gtx.Ops, ring, clip.Stroke{
+		Path:  clip.Ellipse(image.Rect(0, 0, d, d)).Path(gtx.Ops),
+		Width: float32(gtx.Dp(unit.Dp(2))),
+	}.Op())
+	if dot {
+		dd := gtx.Dp(unit.Dp(9))
+		off := (d - dd) / 2
+		paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(off, off, off+dd, off+dd)).Op(gtx.Ops))
+	}
+	return layout.Dimensions{Size: image.Pt(d, d)}
+}
+
+// graphicBesideLabel lays out a square graphic of graphicDp
+// beside a single-line label, anchoring the graphic's center
+// to the label's ink center.
+//
+// Why not a Middle-aligned Flex: the bundled CJK font's line
+// box carries its leading almost entirely below the glyphs,
+// so a box-centered graphic renders ~10dp low against the
+// visible glyphs (frame-verified on the v4 settings and log
+// pages). A Gio label reports its baseline in its Dimensions;
+// for this font the glyph ink center sits ~0.39em above the
+// baseline at any size, which is stable. Stacked children run
+// in order, so the label is laid out first and the graphic is
+// then offset from the recorded baseline. emDp is the label's
+// font size. Note Gio reports Dimensions.Baseline as the
+// distance from the BOTTOM of the label box to the baseline,
+// so the baseline's distance from the top is Size.Y-Baseline
+// (probe-verified: 16.4dp at 14sp for the bundled font).
+func graphicBesideLabel(gtx layout.Context, graphicDp, gapDp, emDp float32, graphic, labelW layout.Widget) layout.Dimensions {
+	inkCenter := 0
+	return layout.Stack{}.Layout(gtx,
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(graphicDp + gapDp)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				d := labelW(gtx)
+				inkCenter = d.Size.Y - d.Baseline - gtx.Dp(unit.Dp(0.39*emDp))
+				return d
+			})
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			half := gtx.Dp(unit.Dp(graphicDp)) / 2
+			y := inkCenter - half
+			defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
+			return graphic(gtx)
+		}),
+	)
+}
+
+// radioRow is a settings language row: ring + dot when
+// selected, compressed to a single line at least 56dp tall
+// (v4), the selected row tinted like every settings row.
 func (a *App) radioRow(gtx layout.Context, btn *widget.Clickable, text string, selected bool) layout.Dimensions {
-	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(7), Bottom: unit.Dp(7)}.Layout(gtx,
+	body := func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(56))
+		return layout.Inset{Top: unit.Dp(7), Bottom: unit.Dp(7), Left: unit.Dp(14), Right: unit.Dp(14)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						d := gtx.Dp(unit.Dp(19))
+				return graphicBesideLabel(gtx, 19, 10, 14,
+					func(gtx layout.Context) layout.Dimensions {
 						ring := pal.Hint
 						if selected {
 							ring = pal.Primary
 						}
-						paint.FillShape(gtx.Ops, ring, clip.Stroke{
-							Path:  clip.Ellipse(image.Rect(0, 0, d, d)).Path(gtx.Ops),
-							Width: float32(gtx.Dp(unit.Dp(2))),
-						}.Op())
-						if selected {
-							dd := gtx.Dp(unit.Dp(9))
-							off := (d - dd) / 2
-							paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(off, off, off+dd, off+dd)).Op(gtx.Ops))
-						}
-						return layout.Dimensions{Size: image.Pt(d, d)}
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-					layout.Flexed(1, a.lbl(14, font.Normal, pal.Text, text).Layout),
-				)
+						return radioRing(gtx, ring, selected)
+					},
+					a.lbl(14, font.Normal, pal.Text, text).Layout)
 			})
+	}
+	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if !selected {
+			return body(gtx)
+		}
+		return selectedTint(gtx, body)
 	})
 }
 
-// radioDescRow is a settings option row in the reference
-// style: radio ring + title + one line of plain-language
-// description under it. Disabled rows (a choice the platform
-// cannot honor) render dimmed with a reason line instead of
-// the description, and are not clickable — a listed-but-honest
-// absence, never a dead switch.
+// selectedTint paints the v4 selected-row treatment behind a
+// settings row: a PrimaryLite rounded rect inset 6dp/3dp
+// inside the row's own bounds (the row lives in a card; the
+// tint never touches the card edge).
+func selectedTint(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Constraints.Min
+			mx := gtx.Dp(unit.Dp(6))
+			my := gtx.Dp(unit.Dp(3))
+			rect := image.Rect(mx, my, size.X-mx, size.Y-my)
+			r := gtx.Dp(unit.Dp(12))
+			rr := clip.RRect{Rect: rect, NE: r, NW: r, SE: r, SW: r}
+			paint.FillShape(gtx.Ops, pal.PrimaryLite, rr.Op(gtx.Ops))
+			return layout.Dimensions{Size: size}
+		}),
+		layout.Stacked(w),
+	)
+}
+
+// radioDescRow is the v4 settings option row — the single
+// row type for every settings group: radio ring + title + one
+// line of plain-language description under it, at least 56dp
+// tall, the selected row tinted inside its card. Disabled
+// rows (a choice the platform cannot honor) render dimmed
+// with an amber reason line inside the row, and are not
+// clickable — a listed-but-honest absence, never a dead
+// switch.
 func (a *App) radioDescRow(gtx layout.Context, btn *widget.Clickable, title, desc, reason string, selected, enabled bool) layout.Dimensions {
 	content := func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx,
+		gtx.Constraints.Min.Y = gtx.Dp(unit.Dp(56))
+		return layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(14), Right: unit.Dp(14)}.Layout(gtx,
 			func(gtx layout.Context) layout.Dimensions {
 				titleCol, descCol := pal.Text, pal.Secondary
 				if !enabled {
@@ -547,23 +942,13 @@ func (a *App) radioDescRow(gtx layout.Context, btn *widget.Clickable, title, des
 				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							d := gtx.Dp(unit.Dp(19))
 							ring := pal.Hint
 							if !enabled {
 								ring = pal.Disabled
 							} else if selected {
 								ring = pal.Primary
 							}
-							paint.FillShape(gtx.Ops, ring, clip.Stroke{
-								Path:  clip.Ellipse(image.Rect(0, 0, d, d)).Path(gtx.Ops),
-								Width: float32(gtx.Dp(unit.Dp(2))),
-							}.Op())
-							if selected && enabled {
-								dd := gtx.Dp(unit.Dp(9))
-								off := (d - dd) / 2
-								paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(off, off, off+dd, off+dd)).Op(gtx.Ops))
-							}
-							return layout.Dimensions{Size: image.Pt(d, d)}
+							return radioRing(gtx, ring, selected && enabled)
 						})
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
@@ -588,10 +973,16 @@ func (a *App) radioDescRow(gtx layout.Context, btn *widget.Clickable, title, des
 				)
 			})
 	}
-	if !enabled {
-		return content(gtx)
+	wrapped := func(gtx layout.Context) layout.Dimensions {
+		if !selected {
+			return content(gtx)
+		}
+		return selectedTint(gtx, content)
 	}
-	return btn.Layout(gtx, content)
+	if !enabled {
+		return wrapped(gtx)
+	}
+	return btn.Layout(gtx, wrapped)
 }
 
 // editorBox frames an editor with the mockups' light fill and
@@ -960,13 +1351,15 @@ func starIcon(gtx layout.Context, fav bool, sizeDp int) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(s, s)}
 }
 
-// eyeMark draws the brand mark of Step 3 direction 1 (two
-// eyelid arcs converging on a solid pupil = the node): an eye
-// outline stroked in the primary color, a ring pupil and a
-// solid center dot. Never a realistic eyeball (mockup README).
-func eyeMark(gtx layout.Context) layout.Dimensions {
-	w := gtx.Dp(unit.Dp(34))
-	h := gtx.Dp(unit.Dp(24))
+// eyeGlyph draws the brand eye (Step 3 direction 1: two
+// eyelid arcs converging on a pupil = the node) at w x h in
+// the given color. pupil=false draws the lids only (the hero
+// badge draws its own state ring in the pupil's place);
+// solidPupil adds the center dot inside the ring. Never a
+// realistic eyeball (mockup README).
+func eyeGlyph(gtx layout.Context, wDp, hDp int, col color.NRGBA, pupil, solidPupil bool, strokeDp float32) {
+	w := gtx.Dp(unit.Dp(wDp))
+	h := gtx.Dp(unit.Dp(hDp))
 	fw, fh := float32(w), float32(h)
 	var p clip.Path
 	p.Begin(gtx.Ops)
@@ -975,20 +1368,139 @@ func eyeMark(gtx layout.Context) layout.Dimensions {
 	p.QuadTo(f32.Point{X: fw * 0.5, Y: -fh * 0.42}, f32.Point{X: fw * 0.97, Y: fh * 0.5})
 	// Lower lid: right corner -> bottom arc -> left corner.
 	p.QuadTo(f32.Point{X: fw * 0.5, Y: fh * 1.42}, f32.Point{X: fw * 0.03, Y: fh * 0.5})
-	stroke := clip.Stroke{Path: p.End(), Width: float32(gtx.Dp(unit.Dp(2.2)))}
-	paint.FillShape(gtx.Ops, pal.Primary, stroke.Op())
+	stroke := clip.Stroke{Path: p.End(), Width: float32(gtx.Dp(unit.Dp(strokeDp)))}
+	paint.FillShape(gtx.Ops, col, stroke.Op())
+	if !pupil {
+		return
+	}
 	// Pupil ring.
-	rd := gtx.Dp(unit.Dp(11))
+	rd := w * 11 / 34
 	off := image.Pt((w-rd)/2, (h-rd)/2)
-	paint.FillShape(gtx.Ops, pal.Primary, clip.Stroke{
+	paint.FillShape(gtx.Ops, col, clip.Stroke{
 		Path:  clip.Ellipse(image.Rect(off.X, off.Y, off.X+rd, off.Y+rd)).Path(gtx.Ops),
-		Width: float32(gtx.Dp(unit.Dp(2))),
+		Width: float32(gtx.Dp(unit.Dp(strokeDp * 0.9))),
 	}.Op())
-	// Pupil dot (the node everything converges on).
-	dd := gtx.Dp(unit.Dp(4))
-	off2 := image.Pt((w-dd)/2, (h-dd)/2)
-	paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(off2.X, off2.Y, off2.X+dd, off2.Y+dd)).Op(gtx.Ops))
-	return layout.Dimensions{Size: image.Pt(w, h)}
+	if solidPupil {
+		// Pupil dot (the node everything converges on).
+		dd := w * 4 / 34
+		off2 := image.Pt((w-dd)/2, (h-dd)/2)
+		paint.FillShape(gtx.Ops, col, clip.Ellipse(image.Rect(off2.X, off2.Y, off2.X+dd, off2.Y+dd)).Op(gtx.Ops))
+	}
+}
+
+// eyeMark is the header brand mark (34x24, primary color,
+// solid pupil).
+func eyeMark(gtx layout.Context) layout.Dimensions {
+	eyeGlyph(gtx, 34, 24, pal.Primary, true, true, 2.2)
+	return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(34)), gtx.Dp(unit.Dp(24)))}
+}
+
+// pupilState is the hero badge's connection state (v4: the
+// pupil ring IS the connection state — color, shape and the
+// panel's text agree, so state never rides on color alone).
+type pupilState int
+
+const (
+	pupilIdle pupilState = iota
+	pupilConnecting
+	pupilConnected
+	pupilFailed
+)
+
+// heroBadge draws the v4 "Tongxin" status badge on the hero
+// panel: a 96dp disc (white at 12%) holding the white eye
+// glyph and the pupil ring that carries the state — idle:
+// hollow ring + hollow pupil; connecting: white arc sweeping
+// over a faint track + solid small pupil; connected: full
+// success-green ring + solid green pupil + halo; failed:
+// danger ring + an x pupil. Only the connecting state
+// animates, on a restrained ~1.1s sweep driven by frame
+// invalidation.
+func (a *App) heroBadge(gtx layout.Context, st pupilState) layout.Dimensions {
+	d := gtx.Dp(unit.Dp(dpBadge))
+	size := image.Pt(d, d)
+	cx, cy := float32(d)/2, float32(d)/2
+	white := pal.White
+	// Halo (connected only): a soft success disc behind.
+	if st == pupilConnected {
+		halo := pal.Success
+		halo.A = 0x2E
+		hd := d + gtx.Dp(unit.Dp(16))
+		off := (d - hd) / 2
+		paint.FillShape(gtx.Ops, halo, clip.Ellipse(image.Rect(off, off, off+hd, off+hd)).Op(gtx.Ops))
+	}
+	// Disc.
+	disc := white
+	disc.A = 0x1F
+	paint.FillShape(gtx.Ops, disc, clip.Ellipse(image.Rect(0, 0, d, d)).Op(gtx.Ops))
+	// Eye glyph (white), pupil area left to the ring below.
+	eyeW, eyeH := 62, 44
+	off := image.Pt((d-gtx.Dp(unit.Dp(eyeW)))/2, (d-gtx.Dp(unit.Dp(eyeH)))/2)
+	func() {
+		defer op.Offset(off).Push(gtx.Ops).Pop()
+		eyeGlyph(gtx, eyeW, eyeH, white, false, false, 2.6)
+	}()
+	// Pupil ring: radius 10dp around the center.
+	ringR := float32(gtx.Dp(unit.Dp(10)))
+	ringW := float32(gtx.Dp(unit.Dp(3)))
+	ring := func(col color.NRGBA, a0, a1 float32) {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		arcTo(&p, f32.Point{X: cx, Y: cy}, ringR, a0, a1)
+		paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: ringW}.Op())
+	}
+	dot := func(col color.NRGBA, rDp float32) {
+		rd := gtx.Dp(unit.Dp(rDp))
+		o := image.Pt((d-rd)/2, (d-rd)/2)
+		paint.FillShape(gtx.Ops, col, clip.Ellipse(image.Rect(o.X, o.Y, o.X+rd, o.Y+rd)).Op(gtx.Ops))
+	}
+	switch st {
+	case pupilIdle:
+		c := white
+		c.A = 0x61 // white 38%
+		ring(c, 0, 2*math.Pi)
+		// Hollow small pupil: ring only.
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		arcTo(&p, f32.Point{X: cx, Y: cy}, ringR*0.42, 0, 2*math.Pi)
+		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: p.End(), Width: float32(gtx.Dp(unit.Dp(1.6)))}.Op())
+	case pupilConnecting:
+		track := white
+		track.A = 0x4D // white 30%
+		ring(track, 0, 2*math.Pi)
+		// Sweeping arc: ~100 degrees, rotating once per ~1.1s.
+		ms := time.Now().UnixMilli() % 1100
+		a0 := float32(ms) / 1100 * 2 * math.Pi
+		ring(white, a0, a0+1.75)
+		dot(white, 4.5)
+		gtx.Execute(op.InvalidateCmd{At: time.Now().Add(33 * time.Millisecond)})
+	case pupilConnected:
+		green := nrgba(0x3E, 0xD5, 0x98)
+		ring(green, 0, 2*math.Pi)
+		dot(green, 7)
+	case pupilFailed:
+		red := nrgba(0xFF, 0x9D, 0x8A)
+		ring(red, 0, 2*math.Pi)
+		// x pupil.
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		r := ringR * 0.42
+		p.MoveTo(f32.Point{X: cx - r, Y: cy - r})
+		p.LineTo(f32.Point{X: cx + r, Y: cy + r})
+		p.MoveTo(f32.Point{X: cx + r, Y: cy - r})
+		p.LineTo(f32.Point{X: cx - r, Y: cy + r})
+		paint.FillShape(gtx.Ops, red, clip.Stroke{Path: p.End(), Width: float32(gtx.Dp(unit.Dp(2.2)))}.Op())
+	}
+	return layout.Dimensions{Size: size}
+}
+
+// watermarkEye draws the large faint eye used by the v4 empty
+// states (log page, zero-node first screen): the brand glyph
+// at 120x86 in the border tone — present, quiet, never
+// competing with the one line of text under it.
+func watermarkEye(gtx layout.Context) layout.Dimensions {
+	eyeGlyph(gtx, 120, 86, pal.Border, true, false, 3)
+	return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(120)), gtx.Dp(unit.Dp(86)))}
 }
 
 // --- v3 components (first-screen hero, option groups, sheets) ---
@@ -1016,6 +1528,9 @@ func (a *App) heroButton(gtx layout.Context, btn *widget.Clickable, ic iconKind,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Constraints.Min
 				fillRRect(gtx, size, dpRadiusHero, bg)
+				if kind == btnPrimary || kind == btnDanger {
+					buttonEdge(gtx, size, dpRadiusHero, bg)
+				}
 				if border.A != 0 {
 					strokeRRect(gtx, size, dpRadiusHero, border)
 				}
@@ -1037,116 +1552,36 @@ func (a *App) heroButton(gtx layout.Context, btn *widget.Clickable, ic iconKind,
 	})
 }
 
-// optionGroup is one settings option rendered as a group: the
-// radio, title and description share one column, the whole
-// group is tinted when selected, and a disabled option's
-// reason line sits INSIDE the group directly under its
-// description (teardown settings pattern: a reason must never
-// drift away from the option it belongs to).
-func (a *App) optionGroup(gtx layout.Context, btn *widget.Clickable, selected, enabled bool, title, desc, reason string) layout.Dimensions {
-	content := func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(12), Bottom: unit.Dp(12), Left: unit.Dp(12), Right: unit.Dp(12)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return a.radio(gtx, selected, enabled)
-					})
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					rows := []layout.FlexChild{
-						layout.Rigid(a.lbl(15, font.Bold, ternary(enabled, pal.Text, pal.Disabled), title).Layout),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-						layout.Rigid(a.lblWrap(13, 18, font.Normal, ternary(enabled, pal.Secondary, pal.Disabled), desc, 3).Layout),
-					}
-					if reason != "" {
-						rows = append(rows,
-							layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										return iconLayout(gtx, iconWarn, 14, pal.Warn)
-									}),
-									layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
-									layout.Flexed(1, a.lblWrap(12.5, 17, font.Normal, pal.Warn, reason, 2).Layout),
-								)
-							}),
-						)
-					}
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
-				}),
-			)
-		})
-	}
-	clickable := func(gtx layout.Context) layout.Dimensions {
-		if enabled {
-			return material.Clickable(gtx, btn, content)
-		}
-		return content(gtx)
-	}
-	// Every group is a card (mockup 03): the selected one is
-	// tinted, the rest sit on the card surface with a border.
-	// The Expanded child takes the Stacked child's size, so
-	// the fill covers exactly the group's bounds.
-	bg := pal.Card
-	if selected {
-		bg = pal.PrimaryLite
-	}
-	return layout.Stack{}.Layout(gtx,
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			sz := gtx.Constraints.Min
-			fillRRect(gtx, sz, 10, bg)
-			strokeRRect(gtx, sz, 10, pal.Border)
-			return layout.Dimensions{Size: sz}
-		}),
-		layout.Stacked(clickable),
-	)
-}
-
-// radio draws the settings radio circle in the active palette
-// (22dp ring, 11dp dot; same drawing idiom as radioDescRow).
-func (a *App) radio(gtx layout.Context, selected, enabled bool) layout.Dimensions {
-	d := gtx.Dp(unit.Dp(22))
-	size := image.Pt(d, d)
-	ring := pal.Hint
-	if !enabled {
-		ring = pal.Disabled
-	} else if selected {
-		ring = pal.Primary
-	}
-	paint.FillShape(gtx.Ops, ring, clip.Stroke{
-		Path:  clip.Ellipse(image.Rect(0, 0, d, d)).Path(gtx.Ops),
-		Width: float32(gtx.Dp(unit.Dp(2))),
-	}.Op())
-	if selected {
-		dd := gtx.Dp(unit.Dp(11))
-		off := (d - dd) / 2
-		c := pal.Primary
-		if !enabled {
-			c = pal.Disabled
-		}
-		paint.FillShape(gtx.Ops, c, clip.Ellipse(image.Rect(off, off, off+dd, off+dd)).Op(gtx.Ops))
-	}
-	return layout.Dimensions{Size: size}
-}
-
-// swatch draws one background-tier swatch in the settings page:
-// a 56x40 mini-UI (background, a card strip, an accent bar)
-// rendered in the tier's own palette, with a 2dp outer ring in
-// the primary color and a check badge when selected. The
-// "system" tier passes split=true and shows light on the left
-// half, navy on the right.
+// swatch draws one background-tier swatch in the settings
+// page: a 56dp mini UI preview (the tier's own page gradient,
+// a card title bar, a primary button pill) so the four tiers
+// read apart at a glance — deep blue vs ink especially (v4
+// A7: the v3 swatches were indistinguishable and the selected
+// check was clipped at the corner). Everything is clipped to
+// the swatch's rounded outline; the selected check sits
+// INSIDE the preview, bottom-right, a primary disc with a
+// white ring. The "system" tier passes split=true and shows
+// light on the left half, navy on the right.
 func (a *App) swatch(gtx layout.Context, p Palette, split bool, selected bool) layout.Dimensions {
 	w := gtx.Dp(unit.Dp(56))
-	h := gtx.Dp(unit.Dp(40))
+	h := gtx.Dp(unit.Dp(56))
 	size := image.Pt(w, h)
+	r := gtx.Dp(unit.Dp(10))
+	rr := clip.RRect{Rect: image.Rect(0, 0, w, h), NE: r, NW: r, SE: r, SW: r}
+	defer rr.Push(gtx.Ops).Pop()
+	u := func(dp int) int { return gtx.Dp(unit.Dp(dp)) }
 	drawHalf := func(x0, x1 int, pp Palette) {
 		stack := clip.Rect{Min: image.Pt(x0, 0), Max: image.Pt(x1, h)}.Push(gtx.Ops)
-		paint.FillShape(gtx.Ops, pp.Bg, clip.Rect{Min: image.Pt(0, 0), Max: size}.Op())
-		card := image.Rect(gtx.Dp(unit.Dp(6)), gtx.Dp(unit.Dp(7)), w-gtx.Dp(unit.Dp(6)), gtx.Dp(unit.Dp(20)))
-		paint.FillShape(gtx.Ops, pp.Card, clip.RRect{Rect: card, NE: 3, NW: 3, SE: 3, SW: 3}.Op(gtx.Ops))
-		bar := image.Rect(gtx.Dp(unit.Dp(6)), gtx.Dp(unit.Dp(26)), gtx.Dp(unit.Dp(26)), gtx.Dp(unit.Dp(33)))
-		paint.FillShape(gtx.Ops, pp.Primary, clip.RRect{Rect: bar, NE: 3, NW: 3, SE: 3, SW: 3}.Op(gtx.Ops))
+		paint.FillShape(gtx.Ops, pp.BgTop, clip.Rect{Min: image.Pt(0, 0), Max: size}.Op())
+		// Card title bar.
+		bar := image.Rect(u(8), u(9), w-u(8), u(21))
+		paint.FillShape(gtx.Ops, pp.Card, clip.RRect{Rect: bar, NE: 3, NW: 3, SE: 3, SW: 3}.Op(gtx.Ops))
+		// Text line under the bar.
+		line := image.Rect(u(8), u(27), u(26), u(31))
+		paint.FillShape(gtx.Ops, pp.Border, clip.RRect{Rect: line, NE: 2, NW: 2, SE: 2, SW: 2}.Op(gtx.Ops))
+		// Primary button pill.
+		btn := image.Rect(u(8), u(37), u(30), u(48))
+		paint.FillShape(gtx.Ops, pp.Primary, clip.RRect{Rect: btn, NE: 4, NW: 4, SE: 4, SW: 4}.Op(gtx.Ops))
 		stack.Pop()
 	}
 	if split {
@@ -1157,15 +1592,16 @@ func (a *App) swatch(gtx layout.Context, p Palette, split bool, selected bool) l
 	}
 	strokeRRect(gtx, size, 10, pal.Border)
 	if selected {
-		pad := gtx.Dp(unit.Dp(3))
-		st := op.Offset(image.Pt(-pad, -pad)).Push(gtx.Ops)
-		strokeRRect(gtx, image.Pt(w+2*pad, h+2*pad), 12, pal.Primary)
-		st.Pop()
-		bd := gtx.Dp(unit.Dp(16))
-		st2 := op.Offset(image.Pt(w-bd/2, -bd/2)).Push(gtx.Ops)
-		paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(0, 0, bd, bd)).Op(gtx.Ops))
+		// Inset check badge: white ring + primary disc + white
+		// check, fully inside the preview (never clipped).
+		bd := u(19)
+		cx, cy := w-u(13), h-u(13)
+		paint.FillShape(gtx.Ops, pal.White, clip.Ellipse(image.Rect(cx-bd/2, cy-bd/2, cx+bd/2, cy+bd/2)).Op(gtx.Ops))
+		id := u(16)
+		paint.FillShape(gtx.Ops, pal.Primary, clip.Ellipse(image.Rect(cx-id/2, cy-id/2, cx+id/2, cy+id/2)).Op(gtx.Ops))
+		st := op.Offset(image.Pt(cx-u(5), cy-u(5))).Push(gtx.Ops)
 		iconLayout(gtx, iconCheck, 10, pal.White)
-		st2.Pop()
+		st.Pop()
 	}
 	return layout.Dimensions{Size: size}
 }

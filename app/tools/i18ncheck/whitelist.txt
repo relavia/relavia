@@ -217,3 +217,27 @@ vpngate-consent
 # is never rendered (the resolved pack value, or the raw node
 # data id, is).
 proto.
+
+# Log-line classification patterns matched against the local
+# diagnostic log stream by ui.parseLogEntry (log page level
+# dots / failure tint). The log stream is diagnostic-grade
+# English written by the service layer and the kernel; these
+# substrings are match patterns over that content, never
+# rendered as UI copy.
+[error]
+# (same: service LogFailure "<stage> failed: <err>" shape and
+# the connect/fetch failure lines)
+ failed:
+# (same: "refresh failed, previous snapshot kept" shape)
+ failed,
+# (same: "failed model conversion" shape)
+ failed 
+# Success-shape pattern of the service connect log lines
+# ("connected: <name> (<id>)"), never rendered.
+connected:
+# (same: one-tap chain success line "connected to <name>")
+connected to
+# (same: VPN Gate refresh success line "refreshed: N nodes")
+refreshed:
+# (same: VPN Gate enable success line "source enabled")
+source enabled
