@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 讨论区 / Discussions
+    url: https://github.com/relavia/relavia/discussions
+    about: 使用问题与一般讨论请先到这里 / Questions and general discussion
+  - name: 安全政策 / Security policy
+    url: https://github.com/relavia/relavia/security/policy
+    about: 漏洞请走私密通道报告，不要开公开 Issue / Report vulnerabilities privately, never as a public issue
