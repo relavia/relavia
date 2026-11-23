@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -651,6 +652,30 @@ func readSocksAddrFromBytes(b []byte) (shadowsocks.Addr, error) {
 	return shadowsocks.Addr{}, fmt.Errorf("atyp %d", b[0])
 }
 
+// singboxUDPRefWireCap is the reference implementation's UDP
+// datagram ceiling, taken from the pinned sing-box v1.14.4
+// sources: every UDP listener it runs (the shadowsocks inbound
+// and the mixed inbound alike) reads datagrams into
+// buf.NewPacket(), whose capacity is sing's UDPBufferSize =
+// 16 * 1024 (sing/common/buf/buffer_standard.go; the read loop
+// is sing-box/common/listener/listener_udp.go). A wire datagram
+// larger than that is truncated before it reaches the cipher,
+// fails AEAD authentication and is dropped: the server never
+// sees a decryptable packet. CI run 45133519326 pinned this
+// empirically - direct, plane and the pure sing-box control leg
+// all timed out at payload sizes 16384 and 32768 while the
+// sing-box server logged "cipher: message authentication
+// failed" once per oversized packet, and every size up to 8192
+// passed on every leg. The ladder below therefore treats
+// 16 KiB of wire size as the reference envelope: inside it,
+// byte-identical echoes are required on every leg against
+// every server; beyond it, the sing-box server's drop is
+// asserted as a boundary probe (a future sing-box that raises
+// the buffer must fail here loudly, not silently widen the
+// matrix), and the large sizes are proven against server A
+// (shadowsocks-rust) on the legs this project owns.
+const singboxUDPRefWireCap = 16 * 1024
+
 func TestRigDataPlaneUDP(t *testing.T) {
 	echoAddrStr, ok := udpEchoServer(t)
 	if !ok {
@@ -662,10 +687,17 @@ func TestRigDataPlaneUDP(t *testing.T) {
 		{"2022-blake3-aes-256-gcm", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 		{"2022-blake3-chacha20-poly1305", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 	}
-	// Size ladder: the rungs bisect the path's packet-size
-	// behaviour so a size-dependent failure reports its exact
-	// threshold instead of a single opaque mismatch.
-	sizes := []int{512, 4096, 8192, 16384, 32 * 1024}
+	// smallSizes sit inside every reference envelope (payload
+	// plus SOCKS and Shadowsocks overhead stays far below
+	// singboxUDPRefWireCap), so every leg against every server
+	// must echo byte-identically.
+	smallSizes := []int{512, 4096, 8192}
+	// largeSizes exceed the sing-box envelope as wire datagrams
+	// (the payload alone reaches the reference buffer) but are
+	// ordinary datagrams for server A and for this
+	// implementation, which reads packets into 65535 B buffers
+	// on every hop it owns.
+	largeSizes := []int{16384, 32 * 1024}
 	report := func(leg string, size int, payload, got []byte, from shadowsocks.Addr) {
 		t.Helper()
 		prefix := 0
@@ -675,65 +707,155 @@ func TestRigDataPlaneUDP(t *testing.T) {
 		t.Errorf("udp echo mismatch via %s size=%d: from=%v want=%v gotBytes=%d commonPrefix=%d",
 			leg, size, from, echoTarget, len(got), prefix)
 	}
+	rustOK := rustServerAvailable()
+	if !rustOK {
+		t.Logf("diffrig: ssserver unavailable - server A (rust) legs of this test skipped here; CI installs it")
+	}
 	for _, m := range methods {
 		t.Run(m.method, func(t *testing.T) {
-			serverAddr := startSingboxServer(t, m.method, m.password)
-			_, planeAddr := startPlane(t, serverAddr, m.method, m.password, nil)
-			_, ctrlAddr := startControlPlane(t, serverAddr, m.method, m.password, nil)
+			servers := []struct {
+				name string
+				addr string
+				rust bool
+			}{{"singbox", startSingboxServer(t, m.method, m.password), false}}
+			if rustOK {
+				servers = append(servers, struct {
+					name string
+					addr string
+					rust bool
+				}{"rust", startRustServer(t, m.method, m.password), true})
+			}
+			for _, srv := range servers {
+				_, planeAddr := startPlane(t, srv.addr, m.method, m.password, nil)
+				_, ctrlAddr := startControlPlane(t, srv.addr, m.method, m.password, nil)
 
-			// Direct leg: the phase-1 PacketConn straight to
-			// the server, no forwarding plane in between. It
-			// splits "server / PacketConn truncates" from
-			// "a forwarding plane truncates".
-			directClient, err := shadowsocks.NewClient(m.method, m.password)
-			if err != nil {
-				t.Fatal(err)
-			}
-			directPC, err := directClient.DialUDP(context.Background(), serverAddr)
-			if err != nil {
-				t.Fatalf("direct dial udp: %v", err)
-			}
-			defer directPC.Close()
-			_ = directPC.SetDeadline(time.Now().Add(15 * time.Second))
-			for _, size := range sizes {
-				payload := pattern(size, 0x5a)
-				if _, err := directPC.WriteTo(payload, echoTarget); err != nil {
-					t.Errorf("direct udp write size=%d: %v", size, err)
-					continue
-				}
-				buf := make([]byte, 65535)
-				n, addr, err := directPC.ReadFrom(buf)
+				// Direct leg: the phase-1 PacketConn straight
+				// to the server, no forwarding plane in
+				// between. It splits "server / PacketConn
+				// truncates" from "a forwarding plane
+				// truncates". Each exchange carries its own
+				// deadline: the previous shape set one 15 s
+				// deadline for the whole ladder, so the first
+				// timed-out rung poisoned every later write
+				// with an already-expired deadline.
+				directClient, err := shadowsocks.NewClient(m.method, m.password)
 				if err != nil {
-					t.Errorf("direct udp read size=%d: %v", size, err)
-					continue
+					t.Fatal(err)
 				}
-				if addr != echoTarget || !bytes.Equal(buf[:n], payload) {
-					report("direct", size, payload, buf[:n], addr)
+				directPC, err := directClient.DialUDP(context.Background(), srv.addr)
+				if err != nil {
+					t.Fatalf("direct dial udp (%s): %v", srv.name, err)
 				}
-			}
-
-			for _, leg := range []struct{ name, base string }{
-				{"plane", planeAddr},
-				{"control", ctrlAddr},
-			} {
-				for _, size := range sizes {
-					// Fresh associate per size: a reply left
-					// over from a previous exchange must never
-					// be attributed to the next size.
-					client := socksAssociate(t, leg.base)
+				directExchange := func(size int, timeout time.Duration) (shadowsocks.Addr, []byte, error) {
 					payload := pattern(size, 0x5a)
-					from, got, err := client.exchange(t, echoTarget, payload, 10*time.Second)
+					_ = directPC.SetDeadline(time.Now().Add(timeout))
+					if _, err := directPC.WriteTo(payload, echoTarget); err != nil {
+						return shadowsocks.Addr{}, nil, fmt.Errorf("write: %w", err)
+					}
+					buf := make([]byte, 65535)
+					n, addr, err := directPC.ReadFrom(buf)
 					if err != nil {
-						t.Errorf("udp exchange via %s (%s, %d B): %v", leg.name, leg.base, size, err)
+						return shadowsocks.Addr{}, nil, fmt.Errorf("read: %w", err)
+					}
+					return addr, buf[:n], nil
+				}
+				for _, size := range smallSizes {
+					addr, got, err := directExchange(size, 10*time.Second)
+					if err != nil {
+						t.Errorf("direct udp via %s size=%d: %v", srv.name, size, err)
 						continue
 					}
-					if from != echoTarget || !bytes.Equal(got, payload) {
-						report(leg.name+" "+leg.base, size, payload, got, from)
+					if addr != echoTarget || !bytes.Equal(got, pattern(size, 0x5a)) {
+						report("direct "+srv.name, size, pattern(size, 0x5a), got, addr)
+					}
+				}
+				if srv.rust {
+					// Large sizes against server A: this
+					// implementation must carry full-size
+					// datagrams end to end.
+					for _, size := range largeSizes {
+						addr, got, err := directExchange(size, 10*time.Second)
+						if err != nil {
+							t.Errorf("direct udp via rust size=%d: %v", size, err)
+							continue
+						}
+						if addr != echoTarget || !bytes.Equal(got, pattern(size, 0x5a)) {
+							report("direct rust", size, pattern(size, 0x5a), got, addr)
+						}
+					}
+				} else {
+					// Boundary probe: a payload at or above
+					// the reference wire cap must be dropped
+					// by the sing-box server (its listener
+					// truncates the datagram, AEAD fails, no
+					// reply is ever sent). Any reply - or a
+					// non-timeout error - means the reference
+					// envelope moved and this matrix needs a
+					// deliberate update.
+					for _, size := range largeSizes {
+						_, _, err := directExchange(size, 3*time.Second)
+						var nerr net.Error
+						if err == nil {
+							t.Errorf("udp boundary probe size=%d: sing-box server answered a datagram above its %d B wire cap; reference envelope changed, revisit this matrix", size, singboxUDPRefWireCap)
+						} else if !errors.As(err, &nerr) || !nerr.Timeout() {
+							t.Errorf("udp boundary probe size=%d: want read timeout (server drop), got %v", size, err)
+						}
+					}
+				}
+				directPC.Close()
+
+				for _, leg := range []struct{ name, base string }{
+					{"plane", planeAddr},
+					{"control", ctrlAddr},
+				} {
+					legSizes := smallSizes
+					if srv.rust && leg.name == "plane" {
+						// The plane is ours: against server A
+						// it must carry the large sizes too.
+						// The control leg is sing-box's own
+						// stack; its mixed inbound reads the
+						// SOCKS datagram into the same
+						// singboxUDPRefWireCap buffer, so a
+						// 16384 B payload (16394 B on the
+						// SOCKS wire) is truncated inside the
+						// reference before its outbound ever
+						// runs - the control leg has no
+						// large-size domain, and the envelope
+						// itself is probed on the direct leg
+						// above.
+						legSizes = append(append([]int{}, smallSizes...), largeSizes...)
+					}
+					for _, size := range legSizes {
+						// Fresh associate per size: a reply
+						// left over from a previous exchange
+						// must never be attributed to the
+						// next size.
+						client := socksAssociate(t, leg.base)
+						payload := pattern(size, 0x5a)
+						from, got, err := client.exchange(t, echoTarget, payload, 10*time.Second)
+						if err != nil {
+							t.Errorf("udp exchange via %s->%s (%s, %d B): %v", leg.name, srv.name, leg.base, size, err)
+							continue
+						}
+						if from != echoTarget || !bytes.Equal(got, payload) {
+							report(leg.name+"->"+srv.name+" "+leg.base, size, payload, got, from)
+						}
 					}
 				}
 			}
 		})
 	}
+}
+
+// rustServerAvailable mirrors startRustServer's lookup so the
+// UDP matrix can include server A per-server instead of
+// skipping the whole method subtest when the binary is absent.
+func rustServerAvailable() bool {
+	if os.Getenv("RELAVIA_SSSERVER") != "" {
+		return true
+	}
+	_, err := exec.LookPath("ssserver")
+	return err == nil
 }
 
 // --- G4 data-plane error / termination layer --------------------------
