@@ -29,12 +29,13 @@ type vecFile struct {
 }
 
 type vecEntry struct {
-	ID       string         `json:"id"`
-	Priority string         `json:"priority"`
-	Category string         `json:"category"`
-	Method   string         `json:"method"`
-	Inputs   map[string]any `json:"inputs"`
-	Expected map[string]any `json:"expected"`
+	ID        string         `json:"id"`
+	Priority  string         `json:"priority"`
+	Category  string         `json:"category"`
+	Method    string         `json:"method"`
+	Inputs    map[string]any `json:"inputs"`
+	Expected  map[string]any `json:"expected"`
+	Withdrawn string         `json:"withdrawn,omitempty"`
 }
 
 // testTB is the subset of *testing.T / *testing.F the vector
@@ -256,7 +257,7 @@ func TestVectorsWire2017TCP(t *testing.T) {
 					t.Fatalf("request stream mismatch (%d vs %d bytes)", len(got), len(want))
 				}
 			}
-			if _, ok := v.Expected["responseStream"]; ok {
+			if _, ok := v.Expected["responseStream"]; ok && v.Withdrawn == "" {
 				r, err := client.readResponsePrologue(bytes.NewReader(vHex(t, v.Expected, "responseStream")), nil)
 				if err != nil {
 					t.Fatalf("response prologue: %v", err)

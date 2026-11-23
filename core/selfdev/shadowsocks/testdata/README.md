@@ -40,3 +40,13 @@ cd xcheck && go run .
 If any check disagrees, the affected vector is **frozen**: do
 not edit the expectation to match; report the divergence and
 adjudicate per the spec's G4 rule.
+
+## Corrections
+
+- 2026-11-23: W17-01..04 and W17-06 carry a `withdrawn` marker
+  on `expected.responseStream` - the original response streams
+  were generated with the request-direction model (address
+  header + payload), but a 2017 TCP response has no address
+  header. The original bytes stay in the file for audit; the
+  corrected response streams are W17-21..24 and W17-26. See
+  spec section 6 item 8 and checklist section G.

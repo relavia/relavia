@@ -397,7 +397,33 @@
     "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
     "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
    ],
-   "notes": "IPv4 target, small payload, both directions."
+   "notes": "IPv4 target, small payload, both directions.",
+   "withdrawn": "expected.responseStream only: response address header does not exist on the wire; superseded by the W17-2x twin (spec section 6 item 8)"
+  },
+  {
+   "id": "W17-21",
+   "priority": "P0",
+   "category": "wire2017tcp",
+   "method": "aes-256-gcm",
+   "inputs": {
+    "host": "93.184.216.34",
+    "password": "relavia-test-2017",
+    "payload": "212023222524272629282b2a2d2c2f2e313033323534373639383b3a3d3c3f3e010003020504070609080b0a0d0c0f0e111013121514171619181b1a1d1c1f1e616063626564676669686b6a6d6c6f6e717073727574777679787b7a7d7c7f7e41404342",
+    "port": 80,
+    "responsePayload": "33323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c13121110171615141b1a19181f1e1d1c03020100070605040b0a09080f0e0d0c",
+    "responseSalt": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+   },
+   "expected": {
+    "requestStream": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebffe902dfa93902dc6d50409f965d048a23e99912bcdb4e452a943e7a1a477237bc1673c2eb8699b038be2c96a98a9445143b98063d6a5ec08bdcab628e9a343ab62d4a4036309a1ffc3e95018bbbfc39651d512cadf632c5109c96532dca3a889fdb353ae958de3065df5b0c7c43790a0ce0cfea5cf27e3cd21dc0f7f3747d063f587fa4b06fc8da3e779fb7c4f",
+    "responseStream": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6feb595a1e0bff72a4147e1385047994c1d9cf3662c8c56092bea2f92bd19dace6915c2ec893360f504ab9442b14258245d9ebe1606c07d7c742c4e41506daf6d50e50b76082fb886c52833f4e756abe80a6a13f5579555aba49eeb1549d3233c4c18f"
+   },
+   "sources": [
+    "SIP004 text (shadowsocks-org docs/doc/aead.md)",
+    "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
+    "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
+   ],
+   "notes": "Corrected response-direction twin of W17-01 (payload-only response stream, spec section 6 item 8). IPv4 target, small payload, both directions."
   },
   {
    "id": "W17-02",
@@ -422,7 +448,33 @@
     "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
     "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
    ],
-   "notes": "Domain target."
+   "notes": "Domain target.",
+   "withdrawn": "expected.responseStream only: response address header does not exist on the wire; superseded by the W17-2x twin (spec section 6 item 8)"
+  },
+  {
+   "id": "W17-22",
+   "priority": "P0",
+   "category": "wire2017tcp",
+   "method": "aes-128-gcm",
+   "inputs": {
+    "host": "example.com",
+    "password": "relavia-test-2017",
+    "payload": "212023222524272629282b2a2d2c2f2e313033323534373639383b3a3d3c3f3e010003020504070609080b0a0d0c0f0e111013121514171619181b1a1d1c1f1e616063626564676669686b6a6d6c6f6e717073727574777679787b7a7d7c7f7e41404342",
+    "port": 443,
+    "responsePayload": "33323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c13121110171615141b1a19181f1e1d1c03020100070605040b0a09080f0e0d0c",
+    "responseSalt": "505152535455565758595a5b5c5d5e5f",
+    "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"
+   },
+   "expected": {
+    "requestStream": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafe934c3bdf5b9de682cafa79bb48e625174d22adfd772e2652e6cb610030541b27234b9818a86aa563f73737cbbfd8558e2225191286a4b7f160337c6e0e683d4c50aa0313a7d5e0eabb5d164c1fca0d181711944532469f6610a4c88871cbaa42efd0d0060757e7a84e044402d042a598c79996761db9b626fc7cce7693c7d53b75522512218696cc7365f8e4713c9c5bb5323def9",
+    "responseStream": "505152535455565758595a5b5c5d5e5fb3d0dffe8ea64865e60bc93b107c5789f6bca78d434cc11a893dcdf181fbf3bed1d18e9f1257f8feebeea7abd08ea3099be29a4efdb2c9471dde6c1b2ad1d1e845c9d480755b8dc8e88940cafdb95de574c7341b1af5acb8eaa987cad20a41a7c341"
+   },
+   "sources": [
+    "SIP004 text (shadowsocks-org docs/doc/aead.md)",
+    "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
+    "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
+   ],
+   "notes": "Corrected response-direction twin of W17-02 (payload-only response stream, spec section 6 item 8). Domain target."
   },
   {
    "id": "W17-03",
@@ -447,7 +499,33 @@
     "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
     "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
    ],
-   "notes": "IPv6 target."
+   "notes": "IPv6 target.",
+   "withdrawn": "expected.responseStream only: response address header does not exist on the wire; superseded by the W17-2x twin (spec section 6 item 8)"
+  },
+  {
+   "id": "W17-23",
+   "priority": "P0",
+   "category": "wire2017tcp",
+   "method": "chacha20-ietf-poly1305",
+   "inputs": {
+    "host": "2001:db8::1",
+    "password": "relavia-test-2017",
+    "payload": "212023222524272629282b2a2d2c2f2e313033323534373639383b3a3d3c3f3e010003020504070609080b0a0d0c0f0e111013121514171619181b1a1d1c1f1e616063626564676669686b6a6d6c6f6e717073727574777679787b7a7d7c7f7e41404342",
+    "port": 8388,
+    "responsePayload": "33323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c13121110171615141b1a19181f1e1d1c03020100070605040b0a09080f0e0d0c",
+    "responseSalt": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+   },
+   "expected": {
+    "requestStream": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf6e077e2b94bdc224e1a132947e705ca847d15966de45d082d37a40d6b236eed6f5bcd4049d75f22666f42a6dc817c709c98ba2551b3321c71c9a47a0c7b08db0ecd65d026024324cad34db064d8475f89c3f056d41b57d21815151560091f2daf7a87ca1e63271fcaf4c12ede6f21d60dc3d5771af9e47d456cd5e9f1198234b5bbab004b0c60cf4e9005357d5ffc3ceecb266425eb5c82e16",
+    "responseStream": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6fa4e7f90fd7afee6f25664af6800e2ff26d8dcdfbb12a72c06df7b5f7de74c818381dbfc0545192ae5aa671f238817e2c0af0332476ab9c967f50ce4c97395b5b22c9d1f3ce156fd40c51d1e162500ad0f378eaa8a806cc8088e1a0dbef7bf051edfe"
+   },
+   "sources": [
+    "SIP004 text (shadowsocks-org docs/doc/aead.md)",
+    "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
+    "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
+   ],
+   "notes": "Corrected response-direction twin of W17-03 (payload-only response stream, spec section 6 item 8). IPv6 target."
   },
   {
    "id": "W17-04",
@@ -472,7 +550,33 @@
     "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
     "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
    ],
-   "notes": "Domain target, XChaCha (24-byte nonce)."
+   "notes": "Domain target, XChaCha (24-byte nonce).",
+   "withdrawn": "expected.responseStream only: response address header does not exist on the wire; superseded by the W17-2x twin (spec section 6 item 8)"
+  },
+  {
+   "id": "W17-24",
+   "priority": "P0",
+   "category": "wire2017tcp",
+   "method": "xchacha20-ietf-poly1305",
+   "inputs": {
+    "host": "example.org",
+    "password": "relavia-test-2017",
+    "payload": "212023222524272629282b2a2d2c2f2e313033323534373639383b3a3d3c3f3e010003020504070609080b0a0d0c0f0e111013121514171619181b1a1d1c1f1e616063626564676669686b6a6d6c6f6e717073727574777679787b7a7d7c7f7e41404342",
+    "port": 53,
+    "responsePayload": "33323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c13121110171615141b1a19181f1e1d1c03020100070605040b0a09080f0e0d0c",
+    "responseSalt": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+   },
+   "expected": {
+    "requestStream": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf08b569dee425e9c8f2f5cbf49b6754aa23c46f4a04e5cc9f2fe134cdf7fae02917bba7cee57f26acc869a00022c3f47cfef098f6a220d4b83270fa75276a5a9ab04f979a162e10b562c003a85f15ce9e792592a72bfe2c199a18b49e0074d3c2b969b6d14abf670862b3c8ffc5a58ef03f136808da599acacbd8d5b3719fa8971492efcf86bffb40cd9f14f5d8df96627edc0d0ffc",
+    "responseStream": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f47b8b693f8635715e93e52c173767b578e5ebf8c7dc530b742b452920d8fa75454d25bbbefbfe28803104361df5311e7f17e6ebfeb04e6024072c86b942565a91e5d04a07529dc5b12f7f173099ed60180958e6f0a41c75e018e73b4e2f898c3faae"
+   },
+   "sources": [
+    "SIP004 text (shadowsocks-org docs/doc/aead.md)",
+    "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
+    "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
+   ],
+   "notes": "Corrected response-direction twin of W17-04 (payload-only response stream, spec section 6 item 8). Domain target, XChaCha (24-byte nonce)."
   },
   {
    "id": "W17-05a",
@@ -539,7 +643,33 @@
     "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
     "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
    ],
-   "notes": "Empty payload: first chunk is the address header alone."
+   "notes": "Empty payload: first chunk is the address header alone.",
+   "withdrawn": "expected.responseStream only: response address header does not exist on the wire; superseded by the W17-2x twin (spec section 6 item 8)"
+  },
+  {
+   "id": "W17-26",
+   "priority": "P0",
+   "category": "wire2017tcp",
+   "method": "aes-256-gcm",
+   "inputs": {
+    "host": "93.184.216.34",
+    "password": "relavia-test-2017",
+    "payload": "",
+    "port": 80,
+    "responsePayload": "",
+    "responseSalt": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "salt": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+   },
+   "expected": {
+    "requestStream": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebffefca45b1fdbd3c178a3ab9811f8d62e0aa1912bcdb4e452a983045e1bac856c898816aedbfec86e2d",
+    "responseStream": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+   },
+   "sources": [
+    "SIP004 text (shadowsocks-org docs/doc/aead.md)",
+    "shadowsocks-rust v1.25.0 live interop (diffrig cross-decryption)",
+    "sing-box v1.14.4 (sing-shadowsocks2) live interop (diffrig)"
+   ],
+   "notes": "Corrected response-direction twin of W17-06 (payload-only response stream, spec section 6 item 8). Empty payload: first chunk is the address header alone."
   },
   {
    "id": "W17-07a",
@@ -968,7 +1098,7 @@
    "sources": [
     "SIP004 text (shadowsocks-org docs/doc/aead.md)"
    ],
-   "notes": "Bit flip inside the encrypted length chunk: open must fail before any plaintext is released."
+   "notes": "Bit flip inside the encrypted length chunk: open must fail before any plaintext is released. Base stream predates the section 6 item 8 response-model correction; retained as a decoder-robustness vector (the tamper lands in the length chunk under either response model)."
   },
   {
    "id": "NEG-02",

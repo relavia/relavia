@@ -36,6 +36,12 @@ type vector struct {
 	Expected map[string]any `json:"expected"`
 	Sources  []string       `json:"sources"`
 	Notes    string         `json:"notes,omitempty"`
+	// Withdrawn marks an expectation that was found wrong
+	// after freezing (append-only discipline: the original
+	// bytes stay in the file, the marker records why they must
+	// not be asserted, and a new vector ID carries the
+	// corrected expectation).
+	Withdrawn string `json:"withdrawn,omitempty"`
 }
 
 type vectorFile struct {
@@ -297,7 +303,29 @@ func wire2017Vectors() []vector {
 				"responseStream": hx(wire2017TCP(m, pw2017, rsalt, host, port, rpayload)),
 			},
 			Sources: []string{srcSIP004, srcRustLive, srcSingLive},
-			Notes:   notes})
+			Notes:   notes,
+			// The responseStream above was generated with the
+			// request-direction builder (address header
+			// included). Live differential testing proved a
+			// 2017 TCP response has NO address header; the
+			// expectation is withdrawn (bytes preserved for
+			// audit) and superseded by the W17-2x vector of
+			// the same parameters. requestStream stays valid.
+			Withdrawn: "expected.responseStream only: response address header does not exist on the wire; superseded by the W17-2x twin (spec section 6 item 8)"})
+		// Corrected twin: identical parameters, response built
+		// with the response-direction builder (payload only).
+		twinID := "W17-2" + id[len(id)-1:]
+		vs = append(vs, vector{ID: twinID, Priority: prio, Category: "wire2017tcp", Method: method,
+			Inputs: map[string]any{
+				"password": pw2017, "salt": hx(salt), "responseSalt": hx(rsalt),
+				"host": host, "port": port, "payload": hx(payload), "responsePayload": hx(rpayload),
+			},
+			Expected: map[string]any{
+				"requestStream":  hx(wire2017TCP(m, pw2017, salt, host, port, payload)),
+				"responseStream": hx(wire2017TCPResponse(m, pw2017, rsalt, rpayload)),
+			},
+			Sources: []string{srcSIP004, srcRustLive, srcSingLive},
+			Notes:   "Corrected response-direction twin of " + id + " (payload-only response stream, spec section 6 item 8). " + notes})
 	}
 	tcp("W17-01", "P0", "aes-256-gcm", "93.184.216.34", 80, 100, 64, "IPv4 target, small payload, both directions.")
 	tcp("W17-02", "P0", "aes-128-gcm", "example.com", 443, 100, 64, "Domain target.")
@@ -561,7 +589,7 @@ func negativeVectors() []vector {
 				"plaintext": "none released",
 			},
 			Sources: []string{srcSIP004},
-			Notes:   "Bit flip inside the encrypted length chunk: open must fail before any plaintext is released."})
+			Notes:   "Bit flip inside the encrypted length chunk: open must fail before any plaintext is released. Base stream predates the section 6 item 8 response-model correction; retained as a decoder-robustness vector (the tamper lands in the length chunk under either response model)."})
 	}
 	// NEG-02: truncations of W17-01's request stream at four
 	// points: mid-salt, mid length chunk, mid length tag, mid

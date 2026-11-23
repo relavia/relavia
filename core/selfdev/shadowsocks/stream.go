@@ -326,10 +326,7 @@ func (r *responseReader) Read(p []byte) (int, error) {
 // readResponsePrologue consumes the response salt and, for
 // 2022, the fixed response header (validating type, timestamp
 // window and the echoed request salt per SIP022 3.1.3), and
-// returns the reader for the payload stream. For 2017 the
-// payload stream is preceded by the echoed target address
-// header, which the returned reader consumes and drops - a
-// stream consumer wants payload bytes only.
+// returns the reader for the payload stream.
 func (c *Client) readResponsePrologue(raw io.Reader, reqSalt []byte) (io.Reader, error) {
 	m := c.method
 	salt := make([]byte, m.KeyLen)
@@ -348,7 +345,13 @@ func (c *Client) readResponsePrologue(raw io.Reader, reqSalt []byte) (io.Reader,
 	}
 	nonce := newNonceCounter(m.NonceLen)
 	if !m.Is2022 {
-		return &addrSkipReader{cr: newChunkReader(raw, aead, nonce, chunkCap2017)}, nil
+		// SIP004 TCP responses carry no address header (the
+		// address exists only in the client's request stream;
+		// per-packet address headers are a UDP property).
+		// Verified live against shadowsocks-rust v1.25.0 and
+		// sing-box by the differential rig - see spec section 6
+		// item 8.
+		return newChunkReader(raw, aead, nonce, chunkCap2017), nil
 	}
 	// 2022: the fixed response header is a standalone AEAD chunk
 	// of 1 + 8 + saltLen + 2 bytes and doubles as the first
@@ -377,82 +380,6 @@ func (c *Client) readResponsePrologue(raw io.Reader, reqSalt []byte) (io.Reader,
 	cr := newChunkReader(raw, aead, nonce, chunkCap2022)
 	cr.nextLen = firstLen
 	return cr, nil
-}
-
-// addrSkipReader consumes exactly one SOCKS address header
-// from the head of a decrypted 2017 response stream, then
-// passes payload through. The header may straddle chunk
-// boundaries, so bytes are accumulated until the header's total
-// length is determined and present.
-type addrSkipReader struct {
-	cr   *chunkReader
-	buf  []byte
-	done bool
-	err  error
-}
-
-func (r *addrSkipReader) Read(p []byte) (int, error) {
-	if r.err != nil {
-		return 0, r.err
-	}
-	if !r.done {
-		if err := r.skip(); err != nil {
-			r.err = err
-			return 0, err
-		}
-		r.done = true
-	}
-	return r.cr.Read(p)
-}
-
-func (r *addrSkipReader) skip() error {
-	tmp := make([]byte, 1)
-	for {
-		if len(r.buf) >= 1 {
-			switch r.buf[0] {
-			case 0x01, 0x03, 0x04:
-			default:
-				return fmt.Errorf("%w: response address type 0x%02x", ErrProtocol, r.buf[0])
-			}
-		}
-		if n, ok := socksHeaderLen(r.buf); ok && len(r.buf) >= n {
-			// Bytes pulled past the header are payload already
-			// decrypted by the chunk reader: push them back in
-			// front of its pending plaintext.
-			rest := append([]byte{}, r.buf[n:]...)
-			r.cr.plain = append(rest, r.cr.plain...)
-			r.buf = nil
-			return nil
-		}
-		if len(r.buf) > 259 {
-			return fmt.Errorf("%w: response address header overlong", ErrProtocol)
-		}
-		if _, err := io.ReadFull(r.cr, tmp); err != nil {
-			return err
-		}
-		r.buf = append(r.buf, tmp[0])
-	}
-}
-
-// socksHeaderLen reports the total header length once the
-// prefix determines it (ok=false while the ATYP/length bytes
-// are still missing).
-func socksHeaderLen(b []byte) (int, bool) {
-	if len(b) < 1 {
-		return 0, false
-	}
-	switch b[0] {
-	case 0x01:
-		return 1 + 4 + 2, true
-	case 0x04:
-		return 1 + 16 + 2, true
-	case 0x03:
-		if len(b) < 2 {
-			return 0, false
-		}
-		return 2 + int(b[1]) + 2, true
-	}
-	return 0, false
 }
 
 func equalBytes(a, b []byte) bool {

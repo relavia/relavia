@@ -75,6 +75,20 @@ func wire2017TCP(m methodInfo, password string, salt []byte, host string, port i
 	return append(append([]byte{}, salt...), encryptStream2017(m, subkey, plain)...)
 }
 
+// wire2017TCPResponse builds a 2017 TCP RESPONSE stream:
+// salt || encrypted chunks of the payload ONLY. Unlike the
+// request direction, the response carries no address header
+// (SIP004 defines one stream format; the address header is the
+// client's first payload, and per-packet address headers exist
+// only in UDP). Confirmed live against shadowsocks-rust
+// v1.25.0 and sing-box by the differential rig, 2026-11-23 -
+// see spec section 6 item 8.
+func wire2017TCPResponse(m methodInfo, password string, salt []byte, payload []byte) []byte {
+	master := evpBytesToKey([]byte(password), m.keyLen)
+	subkey := hkdfSHA1Subkey(master, salt, m.keyLen)
+	return append(append([]byte{}, salt...), encryptStream2017(m, subkey, payload)...)
+}
+
 // wire2017UDP builds a full 2017 UDP packet:
 // salt || AEAD(nonce = 0, address header || payload).
 func wire2017UDP(m methodInfo, password string, salt []byte, host string, port int, payload []byte) []byte {
