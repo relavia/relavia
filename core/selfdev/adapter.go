@@ -134,16 +134,16 @@ type Adapter struct {
 	// sing-box backend keeps its own state inside sb; the
 	// composite reports whichever backend ran the current/last
 	// session, and traffic is the sum over both (spec 3.1).
-	plane         *plane
-	runBackend    string
-	pState        kernel.State
-	pSince        time.Time
-	pNodeID       string
-	pMode         kernel.RunMode
-	pErr          *kernel.Error
-	pStart        time.Time
-	planeEverRan  bool
-	planeUpTotal  uint64 // folded totals of finished plane sessions
+	plane          *plane
+	runBackend     string
+	pState         kernel.State
+	pSince         time.Time
+	pNodeID        string
+	pMode          kernel.RunMode
+	pErr           *kernel.Error
+	pStart         time.Time
+	planeEverRan   bool
+	planeUpTotal   uint64 // folded totals of finished plane sessions
 	planeDownTotal uint64
 }
 

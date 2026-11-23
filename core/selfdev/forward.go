@@ -225,6 +225,29 @@ type bufferedConn struct {
 
 func (c *bufferedConn) Read(b []byte) (int, error) { return c.br.Read(b) }
 
+// CloseWrite delegates to the underlying connection. This is
+// load-bearing, not cosmetic: embedding the net.Conn INTERFACE
+// promotes only the interface's methods, so without this
+// explicit forwarder the relay's half-close type assertion
+// silently fails on every inbound connection - a finished
+// response direction then never sends its FIN and the peer
+// hangs until its own deadline (found by the phase-2
+// mid-stream-death differential).
+func (c *bufferedConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return errors.New("selfdev: underlying connection cannot half-close")
+}
+
+// CloseRead delegates likewise.
+func (c *bufferedConn) CloseRead() error {
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return errors.New("selfdev: underlying connection cannot half-close")
+}
+
 func (p *plane) handleTCP(conn net.Conn) {
 	br := bufio.NewReader(conn)
 	first, err := br.Peek(1)
@@ -562,8 +585,8 @@ func httpError(conn net.Conn, status int) {
 // --- UDP (SOCKS5 UDP ASSOCIATE data path) ------------------------------
 
 type udpAssoc struct {
-	key      string
-	plane    *plane
+	key       string
+	plane     *plane
 	clientSrc *net.UDPAddr
 
 	mu       sync.Mutex
@@ -571,7 +594,7 @@ type udpAssoc struct {
 	directLn *net.UDPConn
 	closed   bool
 
-	lastSeen atomic.Int64
+	lastSeen      atomic.Int64
 	udpDenyLogged atomic.Bool
 }
 

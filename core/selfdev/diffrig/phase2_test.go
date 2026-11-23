@@ -8,10 +8,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -729,6 +733,96 @@ func TestRigDataPlaneErrors(t *testing.T) {
 			_ = conn.Close()
 		}
 	})
+}
+
+// --- G4: mid-stream server death ---------------------------------------
+
+// startRustServerProc is startRustServer with the process
+// handle exposed, for tests that kill the server mid-stream.
+// (An in-process sing-box server cannot play this role: its
+// Close is a soft stop that leaves established sockets open
+// for seconds - a rig artefact measured and recorded in the
+// phase-2 record, not a client behaviour.)
+func startRustServerProc(t *testing.T, method, password string) (string, *exec.Cmd) {
+	t.Helper()
+	bin := os.Getenv("RELAVIA_SSSERVER")
+	if bin == "" {
+		bin, _ = exec.LookPath("ssserver")
+	}
+	if bin == "" {
+		t.Skip("diffrig: ssserver (shadowsocks-rust) not found via RELAVIA_SSSERVER or PATH - mid-stream death leg skipped")
+	}
+	port := freePort(t)
+	cfg := map[string]any{
+		"server": "127.0.0.1", "server_port": port,
+		"password": password, "method": method, "timeout": 30,
+		"mode": "tcp_and_udp",
+	}
+	data, _ := json.Marshal(cfg)
+	path := filepath.Join(t.TempDir(), "ssserver.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "-c", path)
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	waitPort(t, addr)
+	return addr, cmd
+}
+
+func TestRigDataPlaneMidStreamDeath(t *testing.T) {
+	echoAddr := startEchoTCP(t)
+	echoTarget := parseAddr(t, echoAddr)
+
+	// Real process death: the rust server is KILLED mid-stream,
+	// so its sockets die with it. Both planes must surface the
+	// death on the SAME connection promptly (an error, never a
+	// hang until the read deadline, never phantom data).
+	serverAddr, cmd := startRustServerProc(t, "aes-256-gcm", "relavia-test-2017")
+
+	_, planeAddr := startPlane(t, serverAddr, "aes-256-gcm", "relavia-test-2017", nil)
+	_, ctrlAddr := startControlPlane(t, serverAddr, "aes-256-gcm", "relavia-test-2017", nil)
+
+	conns := map[string]net.Conn{}
+	for name, base := range map[string]string{"plane": planeAddr, "control": ctrlAddr} {
+		conn := socks5Connect(t, base, echoTarget)
+		payload := pattern(1024, 0x55)
+		if got := echoRoundTrip(t, conn, payload); !bytes.Equal(got, payload) {
+			t.Fatalf("%s: pre-kill echo corrupted", name)
+		}
+		conns[name] = conn
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	for name, conn := range conns {
+		_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+		start := time.Now()
+		_, _ = conn.Write(pattern(1024, 0x56))
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		elapsed := time.Since(start)
+		_ = conn.Close()
+		if err == nil && n > 0 {
+			t.Fatalf("%s: dead server delivered %d phantom bytes", name, n)
+		}
+		if err == nil {
+			t.Fatalf("%s: read after server death returned cleanly (n=0, no error) - termination not signalled", name)
+		}
+		if elapsed > 10*time.Second {
+			t.Fatalf("%s: death surfaced only at the read deadline (%v) - the plane hung on a dead connection", name, elapsed)
+		}
+		t.Logf("%s: mid-stream death surfaced as %v after %v", name, err, elapsed)
+	}
 }
 
 // --- NEG-04: SIP022 timestamp window, behaviour level -----------------
