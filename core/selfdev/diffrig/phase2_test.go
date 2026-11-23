@@ -662,21 +662,73 @@ func TestRigDataPlaneUDP(t *testing.T) {
 		{"2022-blake3-aes-256-gcm", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 		{"2022-blake3-chacha20-poly1305", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="},
 	}
+	// Size ladder: the rungs bisect the path's packet-size
+	// behaviour so a size-dependent failure reports its exact
+	// threshold instead of a single opaque mismatch.
+	sizes := []int{512, 4096, 8192, 16384, 32 * 1024}
+	report := func(leg string, size int, payload, got []byte, from shadowsocks.Addr) {
+		t.Helper()
+		prefix := 0
+		for prefix < len(got) && prefix < len(payload) && got[prefix] == payload[prefix] {
+			prefix++
+		}
+		t.Errorf("udp echo mismatch via %s size=%d: from=%v want=%v gotBytes=%d commonPrefix=%d",
+			leg, size, from, echoTarget, len(got), prefix)
+	}
 	for _, m := range methods {
 		t.Run(m.method, func(t *testing.T) {
 			serverAddr := startSingboxServer(t, m.method, m.password)
 			_, planeAddr := startPlane(t, serverAddr, m.method, m.password, nil)
 			_, ctrlAddr := startControlPlane(t, serverAddr, m.method, m.password, nil)
-			for _, base := range []string{planeAddr, ctrlAddr} {
-				client := socksAssociate(t, base)
-				for _, size := range []int{512, 32 * 1024} {
+
+			// Direct leg: the phase-1 PacketConn straight to
+			// the server, no forwarding plane in between. It
+			// splits "server / PacketConn truncates" from
+			// "a forwarding plane truncates".
+			directClient, err := shadowsocks.NewClient(m.method, m.password)
+			if err != nil {
+				t.Fatal(err)
+			}
+			directPC, err := directClient.DialUDP(context.Background(), serverAddr)
+			if err != nil {
+				t.Fatalf("direct dial udp: %v", err)
+			}
+			defer directPC.Close()
+			_ = directPC.SetDeadline(time.Now().Add(15 * time.Second))
+			for _, size := range sizes {
+				payload := pattern(size, 0x5a)
+				if _, err := directPC.WriteTo(payload, echoTarget); err != nil {
+					t.Errorf("direct udp write size=%d: %v", size, err)
+					continue
+				}
+				buf := make([]byte, 65535)
+				n, addr, err := directPC.ReadFrom(buf)
+				if err != nil {
+					t.Errorf("direct udp read size=%d: %v", size, err)
+					continue
+				}
+				if addr != echoTarget || !bytes.Equal(buf[:n], payload) {
+					report("direct", size, payload, buf[:n], addr)
+				}
+			}
+
+			for _, leg := range []struct{ name, base string }{
+				{"plane", planeAddr},
+				{"control", ctrlAddr},
+			} {
+				for _, size := range sizes {
+					// Fresh associate per size: a reply left
+					// over from a previous exchange must never
+					// be attributed to the next size.
+					client := socksAssociate(t, leg.base)
 					payload := pattern(size, 0x5a)
 					from, got, err := client.exchange(t, echoTarget, payload, 10*time.Second)
 					if err != nil {
-						t.Fatalf("udp exchange via %s (%d B): %v", base, size, err)
+						t.Errorf("udp exchange via %s (%s, %d B): %v", leg.name, leg.base, size, err)
+						continue
 					}
 					if from != echoTarget || !bytes.Equal(got, payload) {
-						t.Fatalf("udp echo mismatch via %s: from=%v bytes=%d", base, from, len(got))
+						report(leg.name+" "+leg.base, size, payload, got, from)
 					}
 				}
 			}
