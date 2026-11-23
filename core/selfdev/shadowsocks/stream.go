@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -47,6 +48,22 @@ func (w *chunkWriter) Write(p []byte) (int, error) {
 	if w.err != nil {
 		return 0, w.err
 	}
+	total := len(p)
+	// Fast path (phase-2 G6 work): with nothing staged, full
+	// chunks are sealed straight out of p - no copy into the
+	// staging buffer and no per-chunk allocation. Only the
+	// sub-cap tail is staged.
+	if len(w.buf) == 0 {
+		for len(p) >= w.cap {
+			if err := w.emit(p[:w.cap]); err != nil {
+				w.err = err
+				return 0, err
+			}
+			p = p[w.cap:]
+		}
+		w.buf = append(w.buf, p...)
+		return total, nil
+	}
 	w.buf = append(w.buf, p...)
 	for len(w.buf) >= w.cap {
 		if err := w.emit(w.buf[:w.cap]); err != nil {
@@ -55,7 +72,7 @@ func (w *chunkWriter) Write(p []byte) (int, error) {
 		}
 		w.buf = w.buf[w.cap:]
 	}
-	return len(p), nil
+	return total, nil
 }
 
 // Flush emits any buffered plaintext as a final short chunk.
@@ -74,13 +91,29 @@ func (w *chunkWriter) Flush() error {
 	return nil
 }
 
+// wireBufPool recycles chunk wire buffers (length block +
+// payload block + both tags). One emit is one buffer and one
+// underlying Write: the phase-1 shape allocated a fresh buffer
+// per chunk and copied the payload into the staging buffer
+// first, which the G6 sentinel measured at roughly half the
+// control implementation's loopback throughput.
+var wireBufPool = sync.Pool{New: func() any {
+	b := make([]byte, 0, 2+tagSize+chunkCap2017+tagSize)
+	return &b
+}}
+
 func (w *chunkWriter) emit(chunk []byte) error {
 	var lb [2]byte
 	binary.BigEndian.PutUint16(lb[:], uint16(len(chunk)))
-	out := make([]byte, 0, 2+tagSize+len(chunk)+tagSize)
-	out = w.aead.Seal(out, w.nonce.next(), lb[:], nil)
-	out = w.aead.Seal(out, w.nonce.next(), chunk, nil)
+	bp := wireBufPool.Get().(*[]byte)
+	out := (*bp)[:0]
+	out = w.aead.Seal(out, w.nonce.cur(), lb[:], nil)
+	w.nonce.advance()
+	out = w.aead.Seal(out, w.nonce.cur(), chunk, nil)
+	w.nonce.advance()
 	_, err := w.w.Write(out)
+	*bp = out
+	wireBufPool.Put(bp)
 	return err
 }
 
@@ -97,6 +130,13 @@ type chunkReader struct {
 	// fixed header doubles as the first length chunk). After
 	// that chunk, lengths come from the stream again.
 	nextLen int
+	// Reused wire/plaintext buffers (phase-2 G6 work): a chunk
+	// is fully consumed before the next is read, so one pair of
+	// buffers serves the whole stream.
+	lenBuf    [2 + tagSize]byte
+	lenPlain  [2]byte
+	cipherBuf []byte
+	plainBuf  []byte
 }
 
 func newChunkReader(r io.Reader, aead cipher.AEAD, nonce *nonceCounter, maxLen int) *chunkReader {
@@ -124,11 +164,11 @@ func (r *chunkReader) readChunk() error {
 		plainLen = r.nextLen
 		r.nextLen = -1
 	} else {
-		lenBuf := make([]byte, 2+tagSize)
-		if _, err := io.ReadFull(r.r, lenBuf); err != nil {
+		if _, err := io.ReadFull(r.r, r.lenBuf[:]); err != nil {
 			return wrapStreamEOF(err)
 		}
-		lb, err := r.aead.Open(nil, r.nonce.next(), lenBuf, nil)
+		lb, err := r.aead.Open(r.lenPlain[:0], r.nonce.cur(), r.lenBuf[:], nil)
+		r.nonce.advance()
 		if err != nil {
 			return fmt.Errorf("%w: length chunk", ErrAEADFailure)
 		}
@@ -140,14 +180,19 @@ func (r *chunkReader) readChunk() error {
 			return fmt.Errorf("%w: zero-length chunk", ErrProtocol)
 		}
 	}
-	buf := make([]byte, plainLen+tagSize)
+	if cap(r.cipherBuf) < plainLen+tagSize {
+		r.cipherBuf = make([]byte, plainLen+tagSize)
+	}
+	buf := r.cipherBuf[:plainLen+tagSize]
 	if _, err := io.ReadFull(r.r, buf); err != nil {
 		return wrapStreamEOF(err)
 	}
-	plain, err := r.aead.Open(nil, r.nonce.next(), buf, nil)
+	plain, err := r.aead.Open(r.plainBuf[:0], r.nonce.cur(), buf, nil)
+	r.nonce.advance()
 	if err != nil {
 		return fmt.Errorf("%w: payload chunk", ErrAEADFailure)
 	}
+	r.plainBuf = plain
 	r.plain = plain
 	return nil
 }

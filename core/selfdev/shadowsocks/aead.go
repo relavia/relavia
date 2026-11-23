@@ -34,15 +34,31 @@ type nonceCounter struct {
 
 func newNonceCounter(size int) *nonceCounter { return &nonceCounter{b: make([]byte, size)} }
 
-func (n *nonceCounter) next() []byte {
-	out := make([]byte, len(n.b))
-	copy(out, n.b)
+// cur returns the nonce for the next AEAD operation without
+// advancing. The returned slice is the counter's own storage:
+// it stays valid until advance is called, and AEAD Seal/Open
+// only read it during the call, so the hot stream paths use
+// cur+advance to stay allocation-free. Callers must not retain
+// the slice across an advance.
+func (n *nonceCounter) cur() []byte { return n.b }
+
+// advance moves the counter to the next nonce value.
+func (n *nonceCounter) advance() {
 	for i := range n.b {
 		n.b[i]++
 		if n.b[i] != 0 {
 			break
 		}
 	}
+}
+
+// next returns a copy of the current nonce and advances. Used
+// where the value must outlive the call (tests, one-shot header
+// assembly); the stream hot paths use cur+advance instead.
+func (n *nonceCounter) next() []byte {
+	out := make([]byte, len(n.b))
+	copy(out, n.b)
+	n.advance()
 	return out
 }
 
