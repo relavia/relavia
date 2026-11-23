@@ -339,7 +339,7 @@ func (p *plane) relay(a, b net.Conn) {
 	wg.Add(2)
 	copyDir := func(dst, src net.Conn, counter *atomic.Uint64) {
 		defer wg.Done()
-		_, _ = io.Copy(&countingWriter{w: dst, n: counter}, src)
+		copyCount(dst, src, counter)
 		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 			_ = cw.CloseWrite()
 		}
@@ -351,17 +351,36 @@ func (p *plane) relay(a, b net.Conn) {
 	_ = b.Close()
 }
 
-type countingWriter struct {
-	w io.Writer
-	n *atomic.Uint64
-}
+// relayBufPool recycles relay copy buffers. 64 KiB keeps the
+// engine's chunk writer fed in cap-sized pieces (four chunks
+// per write) instead of the 32 KiB io.Copy default.
+var relayBufPool = sync.Pool{New: func() any {
+	b := make([]byte, 64*1024)
+	return &b
+}}
 
-func (c *countingWriter) Write(b []byte) (int, error) {
-	n, err := c.w.Write(b)
-	if n > 0 {
-		c.n.Add(uint64(n))
+// copyCount is a counting copy loop: same shape as io.Copy but
+// with pooled buffers and the byte counter inline (a writer
+// wrapper would defeat buffer reuse and fast paths).
+func copyCount(dst io.Writer, src io.Reader, counter *atomic.Uint64) {
+	bp := relayBufPool.Get().(*[]byte)
+	buf := *bp
+	defer relayBufPool.Put(bp)
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[:nr])
+			if nw > 0 {
+				counter.Add(uint64(nw))
+			}
+			if ew != nil || nw != nr {
+				return
+			}
+		}
+		if er != nil {
+			return
+		}
 	}
-	return n, err
 }
 
 // --- SOCKS5 -----------------------------------------------------------

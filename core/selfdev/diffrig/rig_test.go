@@ -811,9 +811,24 @@ func TestRigPerfSentinel(t *testing.T) {
 		}
 		return float64(len(payload)) / time.Since(start).Seconds() / (1 << 20)
 	}
-	selfMBs := measure(func() (net.Conn, error) { return client.DialTCP(ctx, serverAddr, echoTarget) })
+	median3 := func(f func() float64) float64 {
+		vals := []float64{f(), f(), f()}
+		for i := 0; i < 3; i++ {
+			for j := i + 1; j < 3; j++ {
+				if vals[j] < vals[i] {
+					vals[i], vals[j] = vals[j], vals[i]
+				}
+			}
+		}
+		return vals[1]
+	}
+	selfMBs := median3(func() float64 {
+		return measure(func() (net.Conn, error) { return client.DialTCP(ctx, serverAddr, echoTarget) })
+	})
 	socksAddr := startSingboxClient(t, serverAddr, "aes-256-gcm", "relavia-test-2017")
-	ctrlMBs := measure(func() (net.Conn, error) { return socks5Connect(t, socksAddr, echoTarget), nil })
-	t.Logf("G6 sentinel: selfdev=%.1f MiB/s control=%.1f MiB/s ratio=%.2f (gate: >=0.70, miss = analysis not auto-fail)",
+	ctrlMBs := median3(func() float64 {
+		return measure(func() (net.Conn, error) { return socks5Connect(t, socksAddr, echoTarget), nil })
+	})
+	t.Logf("G6 sentinel (median of 3): selfdev=%.1f MiB/s control=%.1f MiB/s ratio=%.2f (gate: >=0.70, miss = analysis not auto-fail)",
 		selfMBs, ctrlMBs, selfMBs/ctrlMBs)
 }
