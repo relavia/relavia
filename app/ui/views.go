@@ -1344,6 +1344,14 @@ func (a *App) layoutPoolStatusBar() layout.Widget {
 							layout.Rigid(a.lbl1(12, font.Normal, pal.Warn, a.T("source.vpngate.stale", nil)).Layout),
 						)
 					}
+					if st.FromSnapshot && !st.SnapshotDate.IsZero() {
+						d := st.SnapshotDate.Local()
+						ds := fmt.Sprintf("%04d-%02d-%02d", d.Year(), int(d.Month()), d.Day())
+						rows = append(rows,
+							layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+							layout.Rigid(a.lbl1(12, font.Normal, pal.Warn, a.T("source.vpngate.snapshot", map[string]string{"date": ds})).Layout),
+						)
+					}
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
@@ -1676,6 +1684,13 @@ func (a *App) layoutVPNGateSource(gtx layout.Context) layout.Dimensions {
 				children = append(children,
 					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 					layout.Rigid(a.lbl(12, font.Normal, pal.Warn, a.T("source.vpngate.stale", nil)).Layout))
+			}
+			if st.FromSnapshot && !st.SnapshotDate.IsZero() {
+				d := st.SnapshotDate.Local()
+				ds := fmt.Sprintf("%04d-%02d-%02d", d.Year(), int(d.Month()), d.Day())
+				children = append(children,
+					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+					layout.Rigid(a.lbl(12, font.Normal, pal.Warn, a.T("source.vpngate.snapshot", map[string]string{"date": ds})).Layout))
 			}
 			children = append(children,
 				layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),

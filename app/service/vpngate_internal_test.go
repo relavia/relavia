@@ -316,3 +316,68 @@ func TestVPNGateLiveRefresh(t *testing.T) {
 		t.Fatalf("live list implausibly small: %d nodes", rep.NodeCount)
 	}
 }
+
+func TestVPNGateSnapshotFallbackBootstrap(t *testing.T) {
+	// Dead endpoint from the start: a closed test server's URL
+	// refuses connections, simulating the restricted-network
+	// bootstrap (no endpoint reachable, no cache anywhere).
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+
+	svc, p := newPoolService(t, deadURL, nil)
+	payload, err := os.ReadFile(sampleCSVPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapDate := time.Date(2026, 11, 23, 5, 28, 48, 0, time.UTC)
+	p.Fetcher.FallbackSnapshot = func() ([]byte, time.Time, error) {
+		return payload, snapDate, nil
+	}
+	ctx := context.Background()
+	if err := svc.AcknowledgeVPNGateRisk(); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.EnableVPNGate(); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := svc.RefreshVPNGate(ctx, true)
+	if err != nil {
+		t.Fatalf("snapshot fallback refresh must succeed: %v", err)
+	}
+	if !rep.FromSnapshot || !rep.SnapshotDate.Equal(snapDate) {
+		t.Fatalf("report = %+v, want the bundled snapshot labelled with its date", rep)
+	}
+	if rep.NodeCount != 10 {
+		t.Fatalf("snapshot refresh imported %d nodes, want 10", rep.NodeCount)
+	}
+	st := svc.VPNGateStatus()
+	if !st.FromSnapshot || !st.SnapshotDate.Equal(snapDate) || st.NodeCount != 10 {
+		t.Fatalf("status = %+v, want snapshot-labelled pool of 10", st)
+	}
+
+	// A live fetch takes over: the snapshot label must clear.
+	srv := serveSample(t)
+	defer srv.Close()
+	p.Fetcher.Endpoints = []string{srv.URL}
+	rep, err = svc.RefreshVPNGate(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.FromSnapshot {
+		t.Fatalf("live refresh must not be labelled snapshot: %+v", rep)
+	}
+	if st := svc.VPNGateStatus(); st.FromSnapshot || !st.SnapshotDate.IsZero() {
+		t.Fatalf("status after live refresh = %+v, want snapshot label cleared", st)
+	}
+
+	// Disable leaves nothing behind: no nodes, no snapshot
+	// label, no enabled state.
+	if err := svc.DisableVPNGate(); err != nil {
+		t.Fatal(err)
+	}
+	st = svc.VPNGateStatus()
+	if st.Enabled || st.NodeCount != 0 || st.FromSnapshot || !st.SnapshotDate.IsZero() {
+		t.Fatalf("status after disable = %+v, want a clean slate", st)
+	}
+}

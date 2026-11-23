@@ -160,6 +160,14 @@ CI repro 作业（新增，口径）：releasetool 的 build/vet/test 为
 出目录运行 `scripts/build-android.sh bind` 生成
 libboxbind.aar，否则壳 APK 构建按设计失败、组装大声中止。
 
+发行前置条件（2026-11-23 增补）：刷新 VPN Gate 内置名单快
+照——运行 `plugins/vpngate/snapshot/refresh-snapshot.sh`
+（官方端点按 HTTPS→HTTP 顺序拉取并更新抓取日期），随后在
+`plugins/vpngate` 跑 `go test ./...` 验证快照通过防投毒校
+验与目录构建；快照日期过旧的构建不许发版（该快照是受限网
+络下新装用户的 bootstrap 兜底名单，见 plugins/vpngate/
+snapshot.go）。
+
 seq 的事实源是该渠道上一份已发布清单的 seq（release.sh 强
 制要求 --seq 或 RELAVIA_UPDATE_SEQ，不给不发）。
 

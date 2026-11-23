@@ -88,13 +88,17 @@ func New(fetcher *Fetcher, consent *Consent) (*Plugin, error) {
 
 // NewDefault wires the plugin with a file cache and file
 // consent store rooted at dir (the plugin's local state
-// directory).
+// directory). This is the production wiring, so it also arms
+// the bootstrap fallback: the bundled list snapshot is served
+// (labelled, with its capture date) when every endpoint fails
+// and no cache exists yet. New() deliberately leaves the
+// fallback seam to the caller.
 func NewDefault(dir string) (*Plugin, error) {
 	consent, err := NewConsent(&FileConsentStore{Path: dir + "/consent.json"})
 	if err != nil {
 		return nil, err
 	}
-	fetcher := &Fetcher{Cache: &FileCache{Dir: dir}}
+	fetcher := &Fetcher{Cache: &FileCache{Dir: dir}, FallbackSnapshot: BundledSnapshot}
 	return New(fetcher, consent)
 }
 

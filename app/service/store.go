@@ -116,6 +116,13 @@ type Settings struct {
 	VPNGateLastRefresh string `json:"vpngateLastRefresh,omitempty"`
 	VPNGateStale       bool   `json:"vpngateStale,omitempty"`
 	VPNGateLastError   string `json:"vpngateLastError,omitempty"`
+	// VPNGateFromSnapshot marks that the pool nodes on display
+	// came from the app-bundled list snapshot (bootstrap
+	// fallback), not from any fetch; VPNGateSnapshotDate is
+	// the snapshot's capture time, RFC 3339. The UI labels the
+	// list with both — a bundled snapshot never poses as live.
+	VPNGateFromSnapshot bool   `json:"vpngateFromSnapshot,omitempty"`
+	VPNGateSnapshotDate string `json:"vpngateSnapshotDate,omitempty"`
 }
 
 // Document is the on-disk store document.

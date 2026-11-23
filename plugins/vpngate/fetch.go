@@ -51,6 +51,14 @@ type ListInfo struct {
 	FromCache bool      // payload came from the local cache
 	Stale     bool      // cache is past TTL or a refresh just failed
 	LastError string    // refresh failure detail when Stale due to an error
+	// FromSnapshot marks the bootstrap fallback: every endpoint
+	// failed, no cache existed, and the payload is the list
+	// snapshot bundled with the app (snapshot.go). FetchedAt
+	// then holds the snapshot's capture time and SnapshotAt
+	// repeats it for display; Stale is always true in this
+	// case — a bundled snapshot is never live data.
+	FromSnapshot bool
+	SnapshotAt   time.Time // capture time of the bundled snapshot
 }
 
 // Cache stores the last validated payload plus its metadata.
@@ -136,6 +144,14 @@ type Fetcher struct {
 	Cache          Cache // nil disables caching
 	TTL            time.Duration
 	Now            func() time.Time // test seam; nil means time.Now
+	// FallbackSnapshot is the bootstrap last resort, consulted
+	// only when every endpoint failed AND no cache exists: it
+	// returns a bundled list payload and its capture time. The
+	// payload must pass ValidatePayload before it is served.
+	// Nil disables the fallback. NewDefault wires it to
+	// BundledSnapshot; bare Fetcher constructions (tests) leave
+	// it unset unless they exercise the fallback.
+	FallbackSnapshot func() (payload []byte, capturedAt time.Time, err error)
 }
 
 func (f *Fetcher) now() time.Time {
@@ -169,7 +185,10 @@ func (f *Fetcher) ttl() time.Duration {
 //     labelled fresh.
 //   - If every endpoint fails, a cache entry (however old) is
 //     served labelled Stale with LastError set — never as fresh.
-//   - With no cache, the aggregated FetchError is returned.
+//   - With no cache either, the bundled snapshot (when wired)
+//     is served labelled FromSnapshot + Stale with its capture
+//     date — the bootstrap fallback, never as fresh data.
+//   - Otherwise the aggregated FetchError is returned.
 func (f *Fetcher) Fetch(ctx context.Context, force bool) ([]byte, ListInfo, error) {
 	var cached []byte
 	var cachedInfo ListInfo
@@ -205,6 +224,30 @@ func (f *Fetcher) Fetch(ctx context.Context, force bool) ([]byte, ListInfo, erro
 		cachedInfo.Stale = true
 		cachedInfo.LastError = ferr.Error()
 		return cached, cachedInfo, nil
+	}
+	if f.FallbackSnapshot != nil {
+		payload, capturedAt, serr := f.FallbackSnapshot()
+		if serr == nil {
+			if verr := ValidatePayload(payload); verr != nil {
+				serr = verr
+			}
+		}
+		if serr == nil {
+			// Deliberately NOT saved to the cache: the
+			// snapshot is app data with its own label, and
+			// caching it would let later reads masquerade
+			// as a fetched list (and entangle it with the
+			// disable-purges-cache discipline).
+			return payload, ListInfo{
+				FetchedAt:    capturedAt,
+				Endpoint:     "bundled-snapshot",
+				Stale:        true,
+				LastError:    ferr.Error(),
+				FromSnapshot: true,
+				SnapshotAt:   capturedAt,
+			}, nil
+		}
+		ferr.Attempts = append(ferr.Attempts, fmt.Errorf("bundled snapshot: %w", serr))
 	}
 	return nil, ListInfo{}, ferr
 }

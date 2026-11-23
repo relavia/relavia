@@ -123,6 +123,13 @@ type VPNGateStatus struct {
 	LastRefresh  time.Time // zero when never refreshed (or after disable)
 	Stale        bool      // displayed nodes are a previous snapshot
 	LastError    string    // last refresh failure detail, when Stale
+	// FromSnapshot: the displayed nodes came from the list
+	// snapshot bundled with the app (bootstrap fallback);
+	// SnapshotDate is when that snapshot was captured from
+	// the official endpoint. Both are surfaced so the UI can
+	// label the list as bundled data with its date.
+	FromSnapshot bool
+	SnapshotDate time.Time
 }
 
 // VPNGateStatus reports the pool's current state: live consent
@@ -157,6 +164,12 @@ func (s *Service) VPNGateStatus() VPNGateStatus {
 	}
 	st.Stale = set.VPNGateStale
 	st.LastError = set.VPNGateLastError
+	st.FromSnapshot = set.VPNGateFromSnapshot
+	if set.VPNGateSnapshotDate != "" {
+		if t, err := time.Parse(time.RFC3339, set.VPNGateSnapshotDate); err == nil {
+			st.SnapshotDate = t
+		}
+	}
 	return st
 }
 
@@ -219,6 +232,8 @@ func (s *Service) DisableVPNGate() error {
 		st.VPNGateLastRefresh = ""
 		st.VPNGateStale = false
 		st.VPNGateLastError = ""
+		st.VPNGateFromSnapshot = false
+		st.VPNGateSnapshotDate = ""
 	})
 	_ = s.store.Save()
 	s.logf("vpngate: source disabled (consent revoked, cache purged, %d pool nodes removed)", removed)
@@ -256,6 +271,10 @@ type VPNGateRefresh struct {
 	Stale           bool
 	LastError       string
 	ProbedReachable int
+	// FromSnapshot / SnapshotDate mirror VPNGateStatus: this
+	// refresh was served by the bundled list snapshot.
+	FromSnapshot bool
+	SnapshotDate time.Time
 }
 
 // RefreshVPNGate pulls the official list through the plugin and
@@ -270,7 +289,13 @@ type VPNGateRefresh struct {
 //   - endpoints failed but a cache existed: the plugin serves
 //     the cache labelled Stale — the refresh succeeds with the
 //     stale snapshot, the result and the status both carry the
-//     Stale flag and the failure detail.
+//     Stale flag and the failure detail;
+//   - endpoints failed with no cache anywhere (fresh install
+//     in a restricted network): the plugin serves the list
+//     snapshot bundled with the app, labelled FromSnapshot
+//     with its capture date — the bootstrap fallback. The
+//     nodes are real list entries and go through the same
+//     reachability probing as any refresh.
 //
 // On success each node's admission level is (re)established by
 // the plugin's TCP reachability probe — labelled tcp-connect,
@@ -383,6 +408,11 @@ func (s *Service) RefreshVPNGate(ctx context.Context, force bool) (*VPNGateRefre
 		st.VPNGateLastRefresh = cat.Info.FetchedAt.UTC().Format(time.RFC3339)
 		st.VPNGateStale = cat.Info.Stale
 		st.VPNGateLastError = cat.Info.LastError
+		st.VPNGateFromSnapshot = cat.Info.FromSnapshot
+		st.VPNGateSnapshotDate = ""
+		if cat.Info.FromSnapshot {
+			st.VPNGateSnapshotDate = cat.Info.SnapshotAt.UTC().Format(time.RFC3339)
+		}
 	})
 	_ = s.store.Save()
 	rep := &VPNGateRefresh{
@@ -394,8 +424,13 @@ func (s *Service) RefreshVPNGate(ctx context.Context, force bool) (*VPNGateRefre
 		Stale:           cat.Info.Stale,
 		LastError:       cat.Info.LastError,
 		ProbedReachable: int(reached),
+		FromSnapshot:    cat.Info.FromSnapshot,
+		SnapshotDate:    cat.Info.SnapshotAt,
 	}
-	if rep.Stale {
+	if rep.FromSnapshot {
+		s.logf("vpngate: refreshed from bundled snapshot (captured %s): %d nodes / %d groups, %d tcp-reachable (endpoints failed: %s)",
+			rep.SnapshotDate.UTC().Format("2006-01-02"), rep.NodeCount, rep.GroupCount, rep.ProbedReachable, rep.LastError)
+	} else if rep.Stale {
 		s.logf("vpngate: refreshed from stale cache: %d nodes / %d groups (%s)", rep.NodeCount, rep.GroupCount, rep.LastError)
 	} else {
 		s.logf("vpngate: refreshed: %d nodes / %d groups, %d tcp-reachable", rep.NodeCount, rep.GroupCount, rep.ProbedReachable)
