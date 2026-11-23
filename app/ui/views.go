@@ -2263,6 +2263,13 @@ func (a *App) layoutSettings(gtx layout.Context) layout.Dimensions {
 				layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 				layout.Rigid(a.lblMax(12, font.Normal, pal.Hint, a.T("mode.effect", nil), 2).Layout),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
+				// Backend gear: which engine serves Shadowsocks
+				// nodes (standard / try the new one first / new
+				// one, testing).
+				layout.Rigid(a.cardTitle(a.T("backend.title", nil))),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(a.layoutBackendGroups),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(18)}.Layout),
 				// Capability card (honest, live-detected states).
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return surface(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
@@ -2460,6 +2467,45 @@ func (a *App) layoutModeGroups(gtx layout.Context) layout.Dimensions {
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, inner...)
 	})
+}
+
+// layoutBackendGroups renders the Shadowsocks backend gear
+// options as one v4 settings card (the same unified row type
+// as the protocol-preference and run-mode groups), followed
+// by the scope note: the gear only ever affects Shadowsocks
+// nodes, and it applies at the next connect, never midway.
+func (a *App) layoutBackendGroups(gtx layout.Context) layout.Dimensions {
+	gear := a.svc.BackendPolicy()
+	opts := []struct{ value, titleKey, descKey string }{
+		{service.BackendSingbox, "backend.stable", "backend.stable_desc"},
+		{service.BackendAuto, "backend.auto", "backend.auto_desc"},
+		{service.BackendSelfdev, "backend.selfdev", "backend.selfdev_desc"},
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return cardShell(gtx, func(gtx layout.Context) layout.Dimensions {
+				inner := []layout.FlexChild{}
+				for i, o := range opts {
+					o := o
+					if i > 0 {
+						inner = append(inner, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return a.dividerInset(gtx, 43)
+						}))
+					}
+					btn := a.backendButton(o.value)
+					if btn.Clicked(gtx) {
+						a.svc.SetBackendPolicy(o.value)
+					}
+					inner = append(inner, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return a.radioDescRow(gtx, btn, a.T(o.titleKey, nil), a.T(o.descKey, nil), "", gear == o.value, true)
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, inner...)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(a.lblMax(12, font.Normal, pal.Hint, a.T("backend.note", nil), 2).Layout),
+	)
 }
 
 func packName(lang string) (string, error) {

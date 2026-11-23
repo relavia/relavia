@@ -140,9 +140,10 @@ type App struct {
 	langBtns map[string]*widget.Clickable
 
 	// Settings preference radios (protocol preference + run
-	// mode), keyed by their setting values.
-	prefBtns map[string]*widget.Clickable
-	modeBtns map[string]*widget.Clickable
+	// mode + backend gear), keyed by their setting values.
+	prefBtns    map[string]*widget.Clickable
+	modeBtns    map[string]*widget.Clickable
+	backendBtns map[string]*widget.Clickable
 
 	// mu guards the fields written by action goroutines and read
 	// during layout (busy, errKey, importResult, traffic).
@@ -196,15 +197,16 @@ type rowButtons struct {
 // New builds the shell around a service and translator.
 func New(svc *service.Service, tr *i18n.Translator, th *material.Theme) *App {
 	a := &App{
-		svc:       svc,
-		tr:        tr,
-		th:        th,
-		rowBtns:   map[string]*rowButtons{},
-		groupBtns: map[string]*widget.Clickable{},
-		langBtns:  map[string]*widget.Clickable{},
-		prefBtns:  map[string]*widget.Clickable{},
-		modeBtns:  map[string]*widget.Clickable{},
-		trafficMu: make(chan struct{}, 1),
+		svc:         svc,
+		tr:          tr,
+		th:          th,
+		rowBtns:     map[string]*rowButtons{},
+		groupBtns:   map[string]*widget.Clickable{},
+		langBtns:    map[string]*widget.Clickable{},
+		prefBtns:    map[string]*widget.Clickable{},
+		modeBtns:    map[string]*widget.Clickable{},
+		backendBtns: map[string]*widget.Clickable{},
+		trafficMu:   make(chan struct{}, 1),
 	}
 	a.nodeList.List.Axis = layout.Vertical
 	a.groupList.List.Axis = layout.Horizontal
@@ -301,6 +303,15 @@ func (a *App) modeButton(value string) *widget.Clickable {
 	if !ok {
 		b = &widget.Clickable{}
 		a.modeBtns[value] = b
+	}
+	return b
+}
+
+func (a *App) backendButton(value string) *widget.Clickable {
+	b, ok := a.backendBtns[value]
+	if !ok {
+		b = &widget.Clickable{}
+		a.backendBtns[value] = b
 	}
 	return b
 }
