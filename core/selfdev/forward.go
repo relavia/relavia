@@ -672,12 +672,11 @@ func (p *plane) handleUDPPacket(packet []byte, src *net.UDPAddr) {
 	if packet[2] != 0 {
 		return // fragmentation is not supported (dropped, as in the control implementation)
 	}
-	br := bufio.NewReader(bytesReader(packet[4:]))
-	target, err := readSocksAddr(br, packet[3])
+	target, hdrLen, err := parseSocksAddrBytes(packet[3:])
 	if err != nil {
 		return
 	}
-	payload := packet[len(packet)-br.Buffered():]
+	payload := packet[3+hdrLen:]
 	a := p.assocFor(src)
 	a.touch()
 
@@ -789,16 +788,38 @@ func (p *plane) sendUDPReply(dst *net.UDPAddr, from shadowsocks.Addr, payload []
 	_, _ = p.udpLn.WriteToUDP(out, dst)
 }
 
-// bytesReader adapts a byte slice to a buffered reader source.
-type sliceReader struct{ b []byte }
-
-func (r *sliceReader) Read(p []byte) (int, error) {
-	if len(r.b) == 0 {
-		return 0, io.EOF
+// parseSocksAddrBytes parses a SOCKS address at the start of
+// b (b[0] is the address type) and returns the address and the
+// number of bytes it occupies. It works on the raw packet: the
+// payload offset must come from the address length itself,
+// never from a buffered reader's fill level (a bufio.Reader
+// buffers at most 4096 bytes, which silently truncated the
+// payload offset of larger datagrams to their last 4090 bytes -
+// caught by the phase-2 UDP differential rig's first CI run).
+func parseSocksAddrBytes(b []byte) (shadowsocks.Addr, int, error) {
+	if len(b) < 1 {
+		return shadowsocks.Addr{}, 0, fmt.Errorf("missing socks address type")
 	}
-	n := copy(p, r.b)
-	r.b = r.b[n:]
-	return n, nil
+	switch b[0] {
+	case 0x01:
+		if len(b) < 7 {
+			return shadowsocks.Addr{}, 0, fmt.Errorf("short ipv4 socks address")
+		}
+		return shadowsocks.Addr{Host: net.IP(b[1:5]).String(), Port: int(binary.BigEndian.Uint16(b[5:7]))}, 7, nil
+	case 0x04:
+		if len(b) < 19 {
+			return shadowsocks.Addr{}, 0, fmt.Errorf("short ipv6 socks address")
+		}
+		return shadowsocks.Addr{Host: net.IP(b[1:17]).String(), Port: int(binary.BigEndian.Uint16(b[17:19]))}, 19, nil
+	case 0x03:
+		if len(b) < 2 {
+			return shadowsocks.Addr{}, 0, fmt.Errorf("short domain socks address")
+		}
+		l := int(b[1])
+		if len(b) < 2+l+2 {
+			return shadowsocks.Addr{}, 0, fmt.Errorf("short domain socks address")
+		}
+		return shadowsocks.Addr{Host: string(b[2 : 2+l]), Port: int(binary.BigEndian.Uint16(b[2+l : 4+l]))}, 2 + l + 2, nil
+	}
+	return shadowsocks.Addr{}, 0, fmt.Errorf("unknown socks address type 0x%02x", b[0])
 }
-
-func bytesReader(b []byte) io.Reader { return &sliceReader{b: b} }

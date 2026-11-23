@@ -147,14 +147,51 @@ bufferedConn 显式 CloseWrite/CloseRead 委托 + 包级回归
 「服务端死亡」的测试替身；死亡场景必须用真实进程
 （ssserver）击杀。此为台架知识，非产品缺陷。
 
+## 4.5 CI 首跑红灯定性（2026-11-23，run 45130226476）
+
+二期 CI 首跑：九项中仅 core 作业红，失败步为
+「Test selfdev differential rig」，其余八项全绿。失败测试
+只有一个：`TestRigDataPlaneUDP` 的三个方法子测试
+（aes-256-gcm / 2022-blake3-aes-256-gcm /
+2022-blake3-chacha20-poly1305），签名完全一致：
+`udp echo mismatch … from=<回声服务器> bytes=4090`
+（32 KiB 交换，512 B 交换通过）。本机 UDP 环回被沙箱
+拦截、二期 UDP 腿在本机 Skip，此为该批测试第一次实跑。
+
+**定性：引擎真缺陷（自研转发层），非台架、非环境。**
+
+根因（`core/selfdev/forward.go` 的 `handleUDPPacket`）：
+载荷偏移由 `bufio.Reader.Buffered()` 推导——bufio 默认
+缓冲 4096 字节，IPv4 地址占 6 字节，4096−6=**4090**，
+与失败字节数逐字吻合。超过 4096 字节的数据报，其载荷
+被静默切成报文的最后 4090 字节；地址解析本身正确
+（from 与目标一致），512 B 交换因全包小于缓冲而无恙，
+三种加密方法同签名（缺陷在明文 SOCKS 层，与密码学
+无关）。修复：新增 `parseSocksAddrBytes` 在原始报文上
+按地址长度显式解析，偏移只由地址长度决定；回归单测
+`TestParseSocksAddrBytesPayloadOffset`（32 KiB 载荷 ×
+IPv4/IPv6/域名三形态 + 短包拒绝）钉住。
+
+取证过程留档：为定位失败腿与尺寸阈值，台架先行仪表化
+（commit 484bc64：分 direct/plane/control 三腿、尺寸
+阶梯 512–32768、每尺寸独立关联、失配报共同前缀长；
+判定标准未放宽）。该次运行（45133109765）的 core 作业
+在第 6 步被既有 flake `TestAuthFailureClassification`
+（openvpn 进程台时序，基线约 1/10，与本缺陷无关，
+openvpn 包对 selfdev 零依赖已核）打断，未跑到差分步；
+但根因由日志签名 + 代码算术已闭合确证，修复后的 CI
+复跑即为确认（仪表化保留为常设诊断）。
+
+待回填：修复提交的 CI 全绿结论（主会话拾取后补记于此）。
+
 ## 5. 一期挂账销账表
 
 | 挂账 | 状态 |
 |---|---|
 | G6 未达线 0.51–0.57 | **销账**：双口径过线（§2），CI 复核待拾取 |
-| UDP G1/G2 本机未跑 | 一期已由 CI run 45125369812 销账；二期 UDP 数据面腿同口径挂 CI |
-| NEG-04 只验字段 | **销账**（TCP 本机 + UDP 待 CI）：行为级拒绝实测 |
-| NEG-07 UDP 重放 | 台架已建，待 CI 实跑判定 |
+| UDP G1/G2 本机未跑 | 一期已由 CI run 45125369812 销账；二期 UDP 数据面腿已由 CI run 45130226476 首跑：抓到引擎真缺陷（§4.5），修复待复跑确认 |
+| NEG-04 只验字段 | **销账**：TCP 本机 + UDP 由 CI run 45130226476 行为级拒绝实测 |
+| NEG-07 UDP 重放 | **销账**：CI run 45130226476 实跑通过（服务端日志见预期的 packet id not unique 拒绝） |
 | G5 长时 fuzz（≥8h/目标） | 不在本包（发布候选阶段），继续挂账 |
 | 默认化（auto 成默认） | 不在本包：仍须全门禁 + 一个 Beta 周期灰度；默认档保持 singbox |
 
