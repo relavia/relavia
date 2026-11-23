@@ -32,10 +32,11 @@ package libboxbind
 //   - Status follows the shell's live handle, which is also
 //     what SessionStatus reports to the Kotlin shell.
 //   - TestHandshakeNode / ValidateSpec delegate to an
-//     in-process sing-box engine ("probe"): a handshake test
-//     needs no TUN (it runs a throwaway local box, exactly as
-//     on desktop), and it must keep working while a TUN
-//     session is up.
+//     in-process composite engine ("probe": sing-box plus the
+//     self-developed Shadowsocks engine under the backend
+//     gear): a handshake test needs no TUN (it runs a
+//     throwaway local box, exactly as on desktop), and it
+//     must keep working while a TUN session is up.
 //   - QueryTraffic fails explicitly: this binding exposes no
 //     counters for the libbox TUN session (the command
 //     server's stats surface is not wired), and the capability
@@ -144,3 +145,23 @@ func (e *tunEngine) QueryTraffic(context.Context) (*kernel.TrafficStats, error) 
 }
 
 func (e *tunEngine) MixedAddr() string { return "" }
+
+// SetBackendPolicy forwards the backend gear to the probe: on
+// this path the gear governs handshake tests and spec
+// validation (the decision points the probe serves), while
+// the TUN data plane itself stays with the choreography's
+// libbox start, exactly as the composite adapter keeps TUN
+// starts on the standard engine.
+func (e *tunEngine) SetBackendPolicy(name string) {
+	if bp, ok := e.probe.(interface{ SetBackendPolicy(string) }); ok {
+		bp.SetBackendPolicy(name)
+	}
+}
+
+// BackendPolicy reports the probe's current gear.
+func (e *tunEngine) BackendPolicy() string {
+	if bp, ok := e.probe.(interface{ BackendPolicy() string }); ok {
+		return bp.BackendPolicy()
+	}
+	return service.BackendSingbox
+}

@@ -16,8 +16,10 @@ import (
 // from the app. DispatchEngine restores the routing the unified
 // model always implied:
 //
-//   - the nine sing-box protocol families go to the sing-box
-//     adapter (Primary);
+//   - the nine sing-box protocol families go to the primary
+//     engine (the composite adapter: sing-box plus the
+//     self-developed Shadowsocks engine under the backend
+//     gear);
 //   - openvpn nodes go to the OpenVPN independent-process
 //     adapter (OpenVPN);
 //   - anything else is refused explicitly with KindUnsupported —
@@ -278,6 +280,24 @@ func (d *DispatchEngine) QueryTraffic(ctx context.Context) (*kernel.TrafficStats
 
 func (d *DispatchEngine) MixedAddr() string {
 	return d.activeOrPrimary().MixedAddr()
+}
+
+// SetBackendPolicy forwards the backend gear to the primary
+// slot (the composite engine), which owns the policy. Slots
+// that wrap another engine (the Android TUN engine wraps its
+// probe) forward it in turn.
+func (d *DispatchEngine) SetBackendPolicy(name string) {
+	if bp, ok := d.Primary.(backendPolicyEngine); ok {
+		bp.SetBackendPolicy(name)
+	}
+}
+
+// BackendPolicy reports the primary slot's current gear.
+func (d *DispatchEngine) BackendPolicy() string {
+	if bp, ok := d.Primary.(backendPolicyEngine); ok {
+		return bp.BackendPolicy()
+	}
+	return BackendSingbox
 }
 
 // CanConnect implements the service-level support query for a

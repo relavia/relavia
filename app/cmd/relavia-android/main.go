@@ -83,8 +83,11 @@ func run() error {
 	// process adapter cannot run on Android, so OpenVPN nodes
 	// (incl. the VPN Gate pool) stay importable/probeable and
 	// connects fail honestly (see service.NewAndroidOpenVPNEngine).
+	// The primary slot is the composite engine (sing-box plus
+	// the self-developed Shadowsocks engine under the
+	// persisted backend gear), as on desktop.
 	engine := service.NewDispatchEngine(
-		service.NewSingBoxEngine(logSink),
+		service.NewCompositeEngine(logSink),
 		service.NewAndroidOpenVPNEngine(),
 	)
 	svc = service.New(store, engine)

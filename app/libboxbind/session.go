@@ -104,8 +104,11 @@ func (s *appSession) ensureBuiltLocked() error {
 	// when the shell registered the native side and degrades
 	// to the slot's previous honest-unavailable behaviour
 	// when it did not (docs/openvpn3安卓接线.md). The VPN
-	// Gate pool source attaches as on every platform.
-	probe := service.NewSingBoxEngine(logSink)
+	// Gate pool source attaches as on every platform. The
+	// probe is the composite engine, so the backend gear
+	// governs the handshake tests it serves; the TUN data
+	// plane stays with the choreography regardless of gear.
+	probe := service.NewCompositeEngine(logSink)
 	tunEng := newTUNEngine(probe)
 	engine := service.NewDispatchEngine(
 		tunEng,

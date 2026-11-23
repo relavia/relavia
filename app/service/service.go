@@ -231,13 +231,19 @@ type Service struct {
 // New builds a Service. engine may be nil (UI can still manage
 // nodes; connection operations then return ErrNoEngine).
 func New(store *Store, engine Engine) *Service {
-	return &Service{
+	s := &Service{
 		store:      store,
 		engine:     engine,
 		logs:       NewLogBuffer(500),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		reach:      map[string]*ReachResult{},
 	}
+	// The persisted backend gear reaches the engine here, at
+	// the one assembly point every platform entry shares, so
+	// no entry point can forget it (the gear lives in the
+	// store; the policy lives in the composite adapter).
+	s.applyBackendPolicy()
+	return s
 }
 
 // Store exposes the underlying store (settings persistence).
@@ -403,6 +409,46 @@ func (s *Service) ProtocolPref() string {
 func (s *Service) SetProtocolPref(pref string) {
 	s.store.UpdateSettings(func(st *Settings) { st.ProtocolPref = pref })
 	_ = s.store.Save()
+}
+
+// BackendPolicy returns the persisted Shadowsocks backend
+// gear, normalized to a known value (unknown or empty reads
+// as the default gear).
+func (s *Service) BackendPolicy() string {
+	switch s.store.Settings().Backend {
+	case BackendAuto:
+		return BackendAuto
+	case BackendSelfdev:
+		return BackendSelfdev
+	default:
+		return BackendSingbox
+	}
+}
+
+// SetBackendPolicy persists the backend gear and applies it to
+// the engine at once; the gear governs the next
+// connection-establishment decision points and never switches
+// a live connection.
+func (s *Service) SetBackendPolicy(name string) {
+	switch name {
+	case BackendAuto, BackendSelfdev:
+	default:
+		name = BackendSingbox
+	}
+	s.store.UpdateSettings(func(st *Settings) { st.Backend = name })
+	_ = s.store.Save()
+	s.applyBackendPolicy()
+}
+
+// applyBackendPolicy pushes the persisted gear into the engine
+// when the wired engine supports switching (the composite
+// engine, directly or through the dispatch engine). Engines
+// without the gear (test doubles, unavailable slots) are left
+// alone.
+func (s *Service) applyBackendPolicy() {
+	if bp, ok := s.engine.(backendPolicyEngine); ok {
+		bp.SetBackendPolicy(s.BackendPolicy())
+	}
 }
 
 // Background theme choices (Settings.Theme), v3 design: four

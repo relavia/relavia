@@ -80,7 +80,17 @@ type Settings struct {
 	// "speed" (fast protocols win near-ties), "compat"
 	// (traditional protocols win near-ties). Consumed by
 	// AutoSelectAndConnect; see autoselect.go.
-	ProtocolPref   string `json:"protocolPref,omitempty"`
+	ProtocolPref string `json:"protocolPref,omitempty"`
+	// Backend is the Shadowsocks backend gear of the
+	// self-developed engine route: "" / "singbox" (the standard
+	// engine serves everything; the default), "auto" (the
+	// self-developed engine is tried first for eligible
+	// Shadowsocks nodes, with per-node fallback), "selfdev"
+	// (eligible Shadowsocks nodes always use the self-developed
+	// engine; a testing gear). It is a local setting only,
+	// never part of the node model. Consumed via
+	// Service.BackendPolicy; see engine.go.
+	Backend        string `json:"backend,omitempty"`
 	SelectedNodeID string `json:"selectedNodeId,omitempty"`
 	SelectedGroup  string `json:"selectedGroup,omitempty"`
 	// Theme is the persisted background choice (v3 design):

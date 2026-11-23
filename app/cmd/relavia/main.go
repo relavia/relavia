@@ -53,11 +53,13 @@ func run() error {
 			svc.OnKernelLog(level, message)
 		}
 	}
-	// Protocol dispatch: sing-box families to the sing-box
-	// adapter, OpenVPN nodes (incl. the VPN Gate pool) to the
+	// Protocol dispatch: the nine sing-box families to the
+	// composite engine (sing-box plus the self-developed
+	// Shadowsocks engine under the persisted backend gear),
+	// OpenVPN nodes (incl. the VPN Gate pool) to the
 	// independent-process adapter.
 	engine := service.NewDispatchEngine(
-		service.NewSingBoxEngine(logSink),
+		service.NewCompositeEngine(logSink),
 		service.NewOpenVPNEngine(logSink),
 	)
 	svc = service.New(store, engine)
