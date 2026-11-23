@@ -14,7 +14,7 @@
 | KDF-03 | P0 | EVP_BytesToKey：长口令（100 B 固定串）、非 ASCII 口令各一 | 期望主密钥 hex |
 | KDF-04 | P0 | HKDF-SHA1 子密钥：KDF-02 主密钥 + 固定盐（16 B / 32 B 各一），info=`ss-subkey` | 期望子密钥 hex |
 | KDF-05 | P0 | SS2022 会话子密钥：固定 PSK（16 B / 32 B）+ 固定盐，BLAKE3 派生、上下文 `shadowsocks 2022 session subkey` | 期望子密钥 hex |
-| KDF-06 | P0 | SS2022 头部密钥派生（TCP 与 UDP 两路，按主规格 §6 核对结果固化） | 期望头部密钥 hex |
+| KDF-06 | P0 | SS2022 头部保护（按主规格 §6 核对结论修正，2026-11-23）：TCP 无独立头部密钥——头部块由 KDF-05 的会话子密钥加密，已由 W22 类向量的头部块字节覆盖，不再单列；UDP AES 独立头 = 以 PSK 为密钥的 AES 单块加密：固定 PSK（16 B / 32 B）+ 固定 16 B 独立头明文（会话 ID‖包 ID） | 期望独立头密文 hex |
 | KDF-07 | P1 | EVP_BytesToKey 边界：口令长度 1 B、55 B、56 B、64 B（MD5 分块边界附近） | 期望主密钥 hex |
 
 ## B. AEAD 原语向量（原语层冒烟，防库选型错误）
