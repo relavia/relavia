@@ -508,6 +508,21 @@ func TestRigInteropUDP(t *testing.T) {
 
 // captureRelay proxies TCP to the real server while recording
 // the client->server byte stream.
+//
+// Recording is authoritative and independent of forwarding:
+// every byte read from the client is appended to the capture
+// BEFORE it is forwarded, and forwarding is best-effort - if
+// the server tears the connection down mid-stream (its target
+// side closed, its session ended), the relay keeps draining
+// the client to EOF instead of aborting the copy. The earlier
+// shape (io.Copy through a MultiWriter with the upstream
+// first) coupled the two: a failed upstream write discarded
+// the batch it carried and ended the capture, truncating it
+// at a chunk boundary - 88 bytes (prologue only) or 16505 of
+// 16639 in TestRigStructural2022, depending on when the
+// server closed (CI run 45136593588; record section 4.7).
+// The client had produced every byte; the recorder dropped
+// them.
 type captureRelay struct {
 	upstream string
 	buf      bytes.Buffer
@@ -523,6 +538,7 @@ func startCaptureRelay(t *testing.T, upstream string) (string, *captureRelay) {
 	r := &captureRelay{upstream: upstream, done: make(chan struct{})}
 	t.Cleanup(func() { _ = l.Close() })
 	go func() {
+		defer close(r.done)
 		c, err := l.Accept()
 		if err != nil {
 			return
@@ -534,8 +550,22 @@ func startCaptureRelay(t *testing.T, upstream string) (string, *captureRelay) {
 		}
 		defer up.Close()
 		go func() { _, _ = io.Copy(c, up) }()
-		_, _ = io.Copy(io.MultiWriter(up, &r.buf), c)
-		close(r.done)
+		chunk := make([]byte, 32*1024)
+		upDead := false
+		for {
+			n, rerr := c.Read(chunk)
+			if n > 0 {
+				r.buf.Write(chunk[:n])
+				if !upDead {
+					if _, werr := up.Write(chunk[:n]); werr != nil {
+						upDead = true
+					}
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
 	}()
 	return l.Addr().String(), r
 }

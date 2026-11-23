@@ -359,17 +359,37 @@ func startFakeDNS(t *testing.T) *fakeDNS {
 		}
 		_ = w.WriteMsg(m)
 	})
-	// One port for both transports.
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// One port for both transports. The UDP and TCP
+	// ephemeral spaces are independent: a port the kernel
+	// hands out for UDP may already be held on TCP - by a
+	// listener or a not-yet-released connection elsewhere
+	// in this long-lived rig process - and the TCP bind
+	// then fails with EADDRINUSE at setup time (seen in CI
+	// run 45136593588 and once locally as a 0.00 s failure
+	// of TestRigDataPlaneDNSSeparation; record section
+	// 4.7). Draw until BOTH transports bind the same port:
+	// the pair is then held for the server's lifetime, so
+	// the returned address cannot collide with anything.
+	var pc net.PacketConn
+	var ln net.Listener
+	var port int
+	for attempt := 0; ; attempt++ {
+		candidate, err := net.ListenPacket("udp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port = candidate.LocalAddr().(*net.UDPAddr).Port
+		ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			pc = candidate
+			break
+		}
+		_ = candidate.Close()
+		if attempt >= 49 {
+			t.Fatalf("fake DNS: no dual-transport port after %d attempts: %v", attempt+1, err)
+		}
 	}
-	port := pc.LocalAddr().(*net.UDPAddr).Port
 	laddr := fmt.Sprintf("127.0.0.1:%d", port)
-	ln, err := net.Listen("tcp", laddr)
-	if err != nil {
-		t.Fatal(err)
-	}
 	f.addr = laddr
 	f.udpLn = &mdns.Server{PacketConn: pc.(net.PacketConn), Handler: handler}
 	f.tcpLn = &mdns.Server{Listener: ln, Handler: handler}
