@@ -44,6 +44,10 @@ func (a Addr) UDPAddr() (*net.UDPAddr, error) {
 	return &net.UDPAddr{IP: ip, Port: a.Port}, nil
 }
 
+// AppendSocks appends the SOCKS5 address encoding to dst
+// (exported for the forwarding plane's UDP reply headers).
+func (a Addr) AppendSocks(dst []byte) []byte { return a.appendSocks(dst) }
+
 // socksLen is the encoded length of the address header.
 func (a Addr) socksLen() int {
 	if ip := net.ParseIP(a.Host); ip != nil {
