@@ -26,6 +26,22 @@ jobs:
       - name: Test sing-box adapter (official build tags, loopback handshakes)
         working-directory: core
         run: go test -tags "with_quic with_utls with_wireguard with_gvisor" -timeout 20m ./singbox/
+      - name: Install shadowsocks-rust (differential rig server A)
+        # Pinned to the version the self-dev spec section 6
+        # verification was cross-checked against.
+        run: |
+          curl -fsSL -o /tmp/ssrust.tar.xz https://github.com/shadowsocks/shadowsocks-rust/releases/download/v1.25.0/shadowsocks-v1.25.0.x86_64-unknown-linux-gnu.tar.xz
+          mkdir -p /tmp/ssrust && tar -xJf /tmp/ssrust.tar.xz -C /tmp/ssrust
+          echo "RELAVIA_SSSERVER=/tmp/ssrust/ssserver" >> "$GITHUB_ENV"
+      - name: Test selfdev differential rig (official build tags)
+        working-directory: core
+        run: go test -tags "with_quic with_utls with_wireguard with_gvisor" -timeout 20m ./selfdev/...
+      - name: Fuzz selfdev decoders (short runs)
+        working-directory: core
+        run: |
+          for target in FuzzDecodePacket2017 FuzzDecodePacket2022AES FuzzDecodePacket2022ChaCha FuzzReadStream2017 FuzzReadStream2022 FuzzParseSocksAddr; do
+            go test ./selfdev/shadowsocks/ -run xxx -fuzz "$target" -fuzztime 30s
+          done
 
   app:
     name: app (client build / vet / test / i18n / windows cross-build)

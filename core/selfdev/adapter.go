@@ -328,6 +328,7 @@ func (a *Adapter) selfdevHandshake(ctx context.Context, n *specnode.Node) (*kern
 	if p := probe.Port(); p != "" {
 		fmt.Sscanf(p, "%d", &probePort)
 	}
+	parentCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, a.opts.ProbeTimeout)
@@ -339,8 +340,8 @@ func (a *Adapter) selfdevHandshake(ctx context.Context, n *specnode.Node) (*kern
 	start := time.Now()
 	conn, err := client.DialTCP(ctx, serverAddr, target)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if parentCtx.Err() != nil {
+			return nil, parentCtx.Err()
 		}
 		res.Error = asHandshakeError(err)
 		return res, nil
@@ -360,8 +361,8 @@ func (a *Adapter) selfdevHandshake(ctx context.Context, n *specnode.Node) (*kern
 	}
 	line, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if parentCtx.Err() != nil {
+			return nil, parentCtx.Err()
 		}
 		res.Error = asHandshakeError(err)
 		return res, nil
@@ -376,13 +377,16 @@ func (a *Adapter) selfdevHandshake(ctx context.Context, n *specnode.Node) (*kern
 	return res, nil
 }
 
-// asHandshakeError preserves the engine's kernel classification
-// where it carries one, wrapped as a handshake failure result
-// otherwise.
+// asHandshakeError maps an engine failure onto the probe
+// contract: a failed handshake test is a HandshakeResult with
+// Kind KindHandshakeFailed (the same classification the
+// sing-box probe reports), with the engine's precisely
+// classified error preserved as the cause. The engine's own
+// classification (network, AEAD failure, protocol violation)
+// stays intact for data-plane callers; only the probe layer
+// flattens it, so the differential error layer compares like
+// with like.
 func asHandshakeError(err error) *kernel.Error {
-	if ke, ok := err.(*kernel.Error); ok {
-		return ke
-	}
 	return kernel.NewError(kernel.KindHandshakeFailed, "selfdev.TestHandshake",
 		"self-developed handshake failed", err)
 }
