@@ -360,3 +360,54 @@ chunk map 对比，证据链：
 9. CI 判决（含全部 UDP 腿、NEG-07、G6 的 CI 复测）由主会话
    拾取后回填本记录；在 CI 结论落地前，本机绿不等于门禁
    全关。
+
+## 7. 更正注记（2026-11-23 补记）：「接线」的实际范围与生产装配落地
+
+本记录 §1 与提交 202ac0e 所称「转发层与接线」、§6.6 所称
+「本包接线在桌面 core 的 kernel.Component 路径」，实际范围
+是 **core 模块内**：复合适配器（core/selfdev）的 Start
+分发与转发层装配，及其在差分台架中的构造路径。app 的生产
+装配当时并未接线——app/service 的引擎构造与三处生产入口
+（cmd/relavia、cmd/relavia-android、libboxbind 会话装配）
+从未 import core/selfdev，复合适配器只被 core 模块的测试
+与台架覆盖。此缺口于 2026-11-23 由主会话实证：CI 产物
+relavia.exe 的 selfdev 字符串计数为 0；全仓非测试代码除
+core/selfdev 自身外无 import。
+
+生产装配与本注记同批落地：
+
+- app/service 新增 CompositeEngine（NewCompositeEngine）：
+  以与原 NewSingBoxEngine 相同的参数构造 sing-box 适配器，
+  再由 selfdev.New 包装为复合适配器，作为 DispatchEngine
+  的主槽；三处生产入口全部换用。接线后本地构建的 Windows
+  exe 中 selfdev 字符串计数为 562（接线前为 0）。
+- 档位贯通：Settings 新增 backend 字段（默认 singbox）；
+  Service.New 在各平台共用的装配点统一应用持久化档位；
+  Service.SetBackendPolicy 持久化并即时应用；DispatchEngine
+  与 libboxbind 的 TUN 引擎（转发至其 probe）逐层转发。
+  纪律不变：仅决策点生效、连接中途不切换、范围外节点钉
+  sing-box 并日志留痕、TUN 与系统代理模式维持 sing-box
+  （复合适配器既有 route 语义；core/selfdev 代码未动）。
+- 设置页新增「连接引擎」档位组（与协议偏好、运行模式同
+  一行型）：三档单选 + 大白话说明，自研档如实标注
+  「测试中」；三语词条 backend.* 共 8 个，三包各 274 键
+  对齐（i18ncheck 100%）。Xvfb 帧验通过：默认选中标准
+  引擎；点击切换到新引擎后 store 落盘 backend=selfdev；
+  重启后选中态保持。
+- 防复发：新增装配级测试 app/service/engine_test.go，
+  钉住「生产构造路径确实产出复合适配器、且持久化档位
+  可达适配器的策略对象」——core 套件全绿不再能被误读
+  为产品已接线。
+- 生效范围（修正 §6.6 的移动端口径）：桌面入口完整生效
+  （Start 与握手测试两个决策点）；Android Gio 逻辑构建
+  主槽同为复合适配器，manual 模式下完整生效；Android
+  libbox 会话中档位治理其 probe 的握手测试 / 校验决策
+  点，TUN 数据面仍走 choreography（libbox），自研 plane
+  不承载 Android TUN 流量——与 §6 第 1、2 项一致，不因
+  本次接线改变。
+- 一期差分跑批记录经核查：其表述均限定在 core 模块与
+  台架范围（被测对象、单元测试覆盖），无同类表述，
+  不另注记。
+- 本注记不改写前文任何结论：§1–§5 的 core 层差分与门禁
+  结论及其证据面不变；「自研引擎在产品中可用」自本次
+  生产接线起成立。
